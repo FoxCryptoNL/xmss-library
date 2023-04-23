@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2022 Fox Crypto B.V.
+# SPDX-License-Identifier: MIT
+
+# default: normalize EOL
+* text=auto
+
+# Boilerplate
+.gitattributes  text
+.gitignore      text
+.editorconfig   text
+
+# REUSE
+*.license       text
+
+# C source
+*.c   text
+*.h   text
+
+# Documentation
+*.md    text
+*.txt   text
+*.html   text
+*.css   text
+*.js    text
+*.png     binary
+*.ttf     binary
+*.woff    binary
+*.woff2   binary
+
+# Configuration
+*.yml   text
+*.json  text
+Doxyfile.in   text
+
+# NIST test vectors
+*.rsp   text eol=crlf
+
+# Linux scripts
+*.sh    text eol=lf
