@@ -8,7 +8,7 @@
 /**
  * @file
  * @brief
- * WOTS+ signatures and verification.
+ * WOTS+ common functionality.
  */
 
 #pragma once
@@ -19,10 +19,18 @@
 
 #include <stdint.h>
 
-#include "config.h"
-
-#include "private.h"
+#include "libxmss.h"
+#include "types.h"
 #include "xmss_hashes.h"
+
+/**
+ * @brief
+ * The number of digests in a WOTS+ private or uncompressed public key.
+ *
+ * @details
+ * This holds for all supported parameter sets, see RFC 8391, Section 5.2 and NIST SP 800-208, Section 5.1 and 5.3.
+ */
+#define XMSS_WOTSP_LEN 67
 
 /**
  * @brief
@@ -31,7 +39,7 @@
  * @details
  * See RFC 8391, Section 3.1.4.
  */
-typedef struct {
+typedef struct WotspPublicKey {
     /** @brief The hash values that make up the WOTS+ public key. */
     XmssNativeValue256 hashes[XMSS_WOTSP_LEN];
 } WotspPublicKey;
@@ -43,87 +51,35 @@ typedef struct {
  * @details
  * See RFC 8391, Section 3.1.5.
  */
-typedef struct {
+typedef struct WotspSignature {
     /** @brief The hash values that make up the WOTS+ signature. */
     XmssNativeValue256 hashes[XMSS_WOTSP_LEN];
 } WotspSignature;
 
 /**
  * @brief
- * Generates the WOTS+ public key for the given seeds.
+ * Chaining function for WOTS+ signatures and verification.
  *
  * @details
- * Based on NIST SP 800-208, Section 7.2.1, Algorithm 10' for the private key generation from the seeds,
- * and on RFC-8391, Section 3.1.4, Algorithm 4 for generating the public key from the private key.
+ * Based on RFC-8391, Section 3.1.2. (Algorithm 2) with the following changes:
+ *  - for-loop instead of recursive calls
+ *  - instead of SEED and ADRS, pass an Input_PRF struct pre-filled with these values, because most of it does not
+ *    change between chain calls within one public key generation, signing or verification process.
  *
- * We only pass the OTS address from ADRS because all other parts of ADRS are either known or set during the
- * public key generation process.
+ * @param[in]     hash_functions    The hash functions to use.
+ * @param[out]    output        Output.
+ * @param[in,out] input_prf     Input_PRF struct filled with the PRF seed and ADRS.
+ *                              At the end of this function, the values of the hash_address and keyAndMask fields in
+ *                              ADRS are unspecified. The Input_PRF can still be used for further calls to chain(),
+ *                              since it initializes those fields to the correct values.
+ * @param[in]     input         Input. (Corresponds to X in Algorithm 2.)
+ * @param[in]     start_index   Starting index for the chain. (Corresponds to i in Algorithm 2.)
+ * @param[in]     num_steps     Number of chain steps to perform. (Corresponds to s in Algorithm 2.)
  *
- * @param[in]  context      The signing context.
- * @param[out] public_key   The location to write the public key.
- * @param[in]  secret_seed  The secret seed for PRFkeygen.
- * @param[in]  public_seed  The public seed for PRF and PRFkeygen.
- * @param[in]  ots_address  Index of the OTS key pair in the larger XMSS scheme. (Part of ADRS in the RFC.)
-*/
-void wotsp_gen_public_key(const struct XmssSigningContext *restrict context,
-    WotspPublicKey *restrict public_key,
-    const XmssNativeValue256 *restrict secret_seed,
-    const XmssNativeValue256 *restrict public_seed,
-    uint32_t ots_address);
-
-/**
- * @brief
- * Generates a WOTS+ signature for the given message digest.
- *
- * @details
- * Based on NIST SP 800-208, Section 7.2.1, Algorithm 10' for the private key generation from the seeds,
- * and on RFC-8391, Section 3.1.5, Algorithm 5 for the actual signing procedure.
- *
- * We only pass the OTS address from ADRS because all other parts of ADRS are either known or set during the
- * signing process.
- *
- * @param[in]  context      The signing context.
- * @param[out] signature    The location to write the signature.
- * @param[in]  message_digest   The message digest to sign.
- * @param[in]  secret_seed  The secret seed for PRFkeygen.
- * @param[in]  public_seed  The public seed for PRF and PRFkeygen.
- * @param[in]  ots_address  Index of the OTS key pair in the larger XMSS scheme. (Part of ADRS in the RFC.)
+ * @returns the number of chain steps performed, used for detecting faults. Must equal num_steps.
  */
-void wotsp_sign(const struct XmssSigningContext *restrict context,
-    WotspSignature *restrict signature,
-    const XmssNativeValue256 *restrict message_digest,
-    const XmssNativeValue256 *restrict secret_seed,
-    const XmssNativeValue256 *restrict public_seed,
-    uint32_t ots_address);
-
-/**
- * @brief
- * Calculates the WOTS+ public key that is consistent with the given message, signature, seed and OTS address.
- *
- * @details
- * Based on RFC-8391, Section 3.1.6., Algorithm 6. If a message was signed with a given secret key and this algorithm
- * is applied to the message and signature, it outputs the public key that corresponds to that secret key, i.e., the
- * one that would be output by Algorithm 4 / wotsp_gen_public_key().
- *
- * A proper verification function for WOTS+ is not needed in XMSS. If the output of this function does not match the
- * WOTS+ public key that was used in the XMSS hash tree, xmss_calculate_expected_public_key() will produce an output
- * that does not match the XMSS public key.
- *
- * We only pass the OTS address from ADRS because all other parts of ADRS are either known or set during the
- * verification process.
- *
- * @param[in]  hashes               The hash functions to use.
- * @param[out] expected_public_key  The location to write the public key that is consistent with the given parameters.
- * @param[in]  message_digest       The message digest to verify.
- * @param[in]  signature            The (purported) signature on the message digest.
- * @param[in]  public_seed          The public seed for PRF.
- * @param[in]  ots_address          Index of the OTS key pair in the larger XMSS scheme. (Part of ADRS in the RFC.)
- */
-void wotsp_calculate_expected_public_key(HASH_ABSTRACTION(const xmss_hashes *restrict hashes)
-    WotspPublicKey *restrict expected_public_key,
-    const XmssNativeValue256 *restrict message_digest,
-    const WotspSignature *restrict signature,
-    const XmssNativeValue256 *restrict public_seed,
-    uint32_t ots_address);
+LIBXMSS_STATIC
+uint_fast8_t chain(HASH_FUNCTIONS_PARAMETER XmssNativeValue256 *output, Input_PRF *input_prf,
+    const XmssNativeValue256 *input, uint32_t start_index, uint_fast8_t num_steps);
 
 #endif /* !XMSS_WOTSP_H_INCLUDED */

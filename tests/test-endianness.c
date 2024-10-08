@@ -48,7 +48,7 @@ static bool test_big_endian_to_native_count(unsigned int count)
     return true;
 }
 
-static bool test_big_endian_to_native()
+static bool test_big_endian_to_native(void)
 {
     bool success = true;
 
@@ -66,7 +66,7 @@ static bool test_inplace_big_endian_to_native_count(uint_fast16_t count)
 {
     /* 1 more than the test data to check for overruns */
     uint32_t buf[TEST_COUNT] = { 0 };
-    memcpy(buf, test_big_endian_data, count * 4);
+    memcpy(buf, test_big_endian_data, (size_t)count * 4);
     inplace_big_endian_to_native(buf, count);
 
     /* verify that the conversion is correct */
@@ -78,7 +78,7 @@ static bool test_inplace_big_endian_to_native_count(uint_fast16_t count)
     return true;
 }
 
-static bool test_inplace_big_endian_to_native()
+static bool test_inplace_big_endian_to_native(void)
 {
     bool success = true;
 
@@ -113,7 +113,7 @@ static bool test_native_to_big_endian_count(unsigned int count)
     return true;
 }
 
-static bool test_native_to_big_endian()
+static bool test_native_to_big_endian(void)
 {
     bool success = true;
 

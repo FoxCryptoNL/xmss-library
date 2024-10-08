@@ -25,58 +25,6 @@
 #include "xmss_hashes_base.h"
 
 /**
- * @copydoc prototype_digest
- * @param[in] init       The initialize function for the digest.
- * @param[in] update     The update function for the digest.
- * @param[in] finalize   The finalize function for the digest.
- *
- * @see prototype_digest
- *
- * @details
- * This is the specialization using the generic interface.
- */
-static inline void generic_digest(XmssGenericDigestInit init, XmssGenericDigestUpdate update,
-    XmssGenericDigestFinalize finalize, XmssValue256 *restrict const digest, const uint8_t *restrict const message,
-    const size_t message_length)
-{
-    void *context = init();
-    update(context, message, message_length);
-    finalize(context, digest);
-}
-
-/**
- * @copydoc prototype_native_digest
- * @param[in] init       The initialize function for the digest.
- * @param[in] update     The update function for the digest.
- * @param[in] finalize   The finalize function for the digest.
- *
- * @see prototype_native_digest
- *
- * @details
- * This is the specialization using the generic interface.
- */
-static inline void generic_native_digest(XmssGenericDigestInit init, XmssGenericDigestUpdate update,
-    XmssGenericDigestFinalize finalize, XmssNativeValue256 *restrict const native_digest,
-    const uint32_t *restrict words, size_t word_count)
-{
-    void *context = init();
-    /* Optimized for SHA-256 block size, but also works for SHAKE256/256. */
-    uint8_t block[64];
-    /* full blocks */
-    while (word_count >= 16) {
-        native_to_big_endian(block, words, 16);
-        update(context, block, 64);
-        word_count -= 16;
-        words += 16;
-    }
-    /* remainder */
-    native_to_big_endian(block, words, word_count);
-    update(context, block, word_count * 4);
-    finalize(context, (XmssValue256 *)native_digest);
-    inplace_big_endian_to_native_256(native_digest);
-}
-
-/**
  * @copydoc prototype_F
  * @param[in] init       The initialize function for the digest.
  * @param[in] update     The update function for the digest.
@@ -87,9 +35,8 @@ static inline void generic_native_digest(XmssGenericDigestInit init, XmssGeneric
  * @details
  * This is the specialization using the generic interface.
  */
-static inline void generic_F(XmssGenericDigestInit init, XmssGenericDigestUpdate update,
-    XmssGenericDigestFinalize finalize, XmssNativeValue256 *restrict const native_digest,
-    const Input_F *restrict const input)
+static inline void generic_F(const XmssGenericDigestInit init, const XmssGenericDigestUpdate update,
+    const XmssGenericDigestFinalize finalize, XmssNativeValue256 *const native_digest, const Input_F *const input)
 {
     void *context = init();
     uint8_t input_big_endian[96];
@@ -110,9 +57,8 @@ static inline void generic_F(XmssGenericDigestInit init, XmssGenericDigestUpdate
  * @details
  * This is the specialization using the generic interface.
  */
-static inline void generic_H(XmssGenericDigestInit init, XmssGenericDigestUpdate update,
-    XmssGenericDigestFinalize finalize, XmssNativeValue256 *restrict const native_digest,
-    const Input_H *restrict const input)
+static inline void generic_H(const XmssGenericDigestInit init, const XmssGenericDigestUpdate update,
+    const XmssGenericDigestFinalize finalize, XmssNativeValue256 *const native_digest, const Input_H *const input)
 {
     void *context = init();
     uint8_t input_big_endian[128];
@@ -123,26 +69,58 @@ static inline void generic_H(XmssGenericDigestInit init, XmssGenericDigestUpdate
 }
 
 /**
- * @copydoc prototype_H_msg
+ * @copydoc prototype_H_msg_init
  * @param[in] init       The initialize function for the digest.
  * @param[in] update     The update function for the digest.
- * @param[in] finalize   The finalize function for the digest.
  *
- * @see prototype_digest
+ * @see prototype_H_msg_init
  *
  * @details
  * This is the specialization using the generic interface.
  */
-static inline void generic_H_msg(XmssGenericDigestInit init, XmssGenericDigestUpdate update,
-    XmssGenericDigestFinalize finalize, XmssNativeValue256 *restrict const native_digest,
-    const Input_H_msg *restrict const input, const uint8_t *restrict const message, const size_t message_length)
+static inline void generic_H_msg_init(const XmssGenericDigestInit init, const XmssGenericDigestUpdate update,
+    XmssHMsgCtx *const ctx, const Input_H_msg *const input)
 {
-    void *context = init();
+    ctx->generic_ctx = init();
     uint8_t input_big_endian[128];
     native_to_big_endian(input_big_endian, (const uint32_t *)input, 32);
-    update(context, input_big_endian, 128);
-    update(context, message, message_length);
-    finalize(context, (XmssValue256 *)native_digest);
+    update(ctx->generic_ctx, input_big_endian, 128);
+}
+
+/**
+ * @copydoc prototype_H_msg_update
+ * @param[in] update     The update function for the digest.
+ *
+ * @see prototype_H_msg_update
+ *
+ * @details
+ * This is the specialization using the generic interface.
+ */
+static inline void generic_H_msg_update(const XmssGenericDigestUpdate update, XmssHMsgCtx *const ctx,
+    const uint8_t *const part, const size_t part_length, const uint8_t *volatile *const part_verify)
+{
+    const uint8_t *volatile const volatile_part = part;
+    update(ctx->generic_ctx, volatile_part, part_length);
+    if (part_verify != NULL)
+    {
+        *part_verify = volatile_part;
+    }
+}
+
+/**
+ * @copydoc prototype_H_msg_finalize
+ * @param[in] finalize   The finalize function for the digest.
+ *
+ * @see prototype_H_msg_finalize
+ *
+ * @details
+ * This is the specialization using the generic interface.
+ */
+static inline void generic_H_msg_finalize(const XmssGenericDigestFinalize finalize,
+    XmssNativeValue256 *const native_digest, XmssHMsgCtx *const ctx)
+{
+    /* We place the big-endian digest in native_digest, then reorder it in-place. */
+    finalize(ctx->generic_ctx, (XmssValue256 *)native_digest);
     inplace_big_endian_to_native_256(native_digest);
 }
 
@@ -157,9 +135,8 @@ static inline void generic_H_msg(XmssGenericDigestInit init, XmssGenericDigestUp
  * @details
  * This is the specialization using the generic interface.
  */
-static inline void generic_PRF(XmssGenericDigestInit init, XmssGenericDigestUpdate update,
-    XmssGenericDigestFinalize finalize, XmssNativeValue256 *restrict const native_digest,
-    const Input_PRF *restrict const input)
+static inline void generic_PRF(const XmssGenericDigestInit init, const XmssGenericDigestUpdate update,
+    const XmssGenericDigestFinalize finalize, XmssNativeValue256 *const native_digest, const Input_PRF *const input)
 {
     void *context = init();
     uint8_t input_big_endian[96];
@@ -168,6 +145,8 @@ static inline void generic_PRF(XmssGenericDigestInit init, XmssGenericDigestUpda
     finalize(context, (XmssValue256 *)native_digest);
     inplace_big_endian_to_native_256(native_digest);
 }
+
+#if XMSS_ENABLE_SIGNING
 
 /**
  * @copydoc prototype_PRFkeygen
@@ -180,9 +159,9 @@ static inline void generic_PRF(XmssGenericDigestInit init, XmssGenericDigestUpda
  * @details
  * This is the specialization using the generic interface.
  */
-static inline void generic_PRFkeygen(XmssGenericDigestInit init, XmssGenericDigestUpdate update,
-    XmssGenericDigestFinalize finalize, XmssNativeValue256 *restrict const native_digest,
-    const Input_PRFkeygen *restrict const input)
+static inline void generic_PRFkeygen(const XmssGenericDigestInit init, const XmssGenericDigestUpdate update,
+    const XmssGenericDigestFinalize finalize, XmssNativeValue256 *const native_digest,
+    const Input_PRFkeygen *const input)
 {
     void *context = init();
     uint8_t input_big_endian[128];
@@ -203,9 +182,9 @@ static inline void generic_PRFkeygen(XmssGenericDigestInit init, XmssGenericDige
  * @details
  * This is the specialization using the generic interface.
  */
-static inline void generic_PRFindex(XmssGenericDigestInit init, XmssGenericDigestUpdate update,
-    XmssGenericDigestFinalize finalize, XmssNativeValue256 *restrict const native_digest,
-    const Input_PRFindex *restrict const input)
+static inline void generic_PRFindex(const XmssGenericDigestInit init, const XmssGenericDigestUpdate update,
+    const XmssGenericDigestFinalize finalize, XmssNativeValue256 *const native_digest,
+    const Input_PRFindex *const input)
 {
     void *context = init();
     uint8_t input_big_endian[128];
@@ -214,5 +193,59 @@ static inline void generic_PRFindex(XmssGenericDigestInit init, XmssGenericDiges
     finalize(context, (XmssValue256 *)native_digest);
     inplace_big_endian_to_native_256(native_digest);
 }
+
+/**
+ * @copydoc prototype_digest
+ * @param[in] init       The initialize function for the digest.
+ * @param[in] update     The update function for the digest.
+ * @param[in] finalize   The finalize function for the digest.
+ *
+ * @see prototype_digest
+ *
+ * @details
+ * This is the specialization using the generic interface.
+ */
+static inline void generic_digest(const XmssGenericDigestInit init, const XmssGenericDigestUpdate update,
+    const XmssGenericDigestFinalize finalize, XmssValue256 *const digest, const uint8_t *const message,
+    const size_t message_length)
+{
+    void *context = init();
+    update(context, message, message_length);
+    finalize(context, digest);
+}
+
+/**
+ * @copydoc prototype_native_digest
+ * @param[in] init       The initialize function for the digest.
+ * @param[in] update     The update function for the digest.
+ * @param[in] finalize   The finalize function for the digest.
+ *
+ * @see prototype_native_digest
+ *
+ * @details
+ * This is the specialization using the generic interface.
+ */
+static inline void generic_native_digest(const XmssGenericDigestInit init, const XmssGenericDigestUpdate update,
+    const XmssGenericDigestFinalize finalize, XmssNativeValue256 *const native_digest, const uint32_t *words,
+    size_t word_count)
+{
+    void *context = init();
+    /* Optimized for SHA-256 block size, but also works for SHAKE256/256. */
+    uint8_t block[64];
+    /* full blocks */
+    while (word_count >= 16) {
+        native_to_big_endian(block, words, 16);
+        update(context, block, 64);
+        word_count -= 16;
+        words += 16;
+    }
+    /* remainder */
+    native_to_big_endian(block, words, word_count);
+    update(context, block, word_count * 4);
+    finalize(context, (XmssValue256 *)native_digest);
+    inplace_big_endian_to_native_256(native_digest);
+}
+
+#endif /* XMSS_ENABLE_SIGNING */
 
 #endif /* !XMSS_GENERIC_XMSS_HASHES_H_INCLUDED */

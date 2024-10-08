@@ -20,12 +20,12 @@
 #include "xmss_config.h"
 
 #include "compat.h"
+#include "libxmss.h"
 #include "opaque_structures.h"
+#include "signing_private.h"
 #include "structures.h"
 #include "types.h"
 #include "xmss_hashes.h"
-
-#include "private.h"
 
 /**
  * @brief
@@ -44,9 +44,8 @@
  * @retval XMSS_OKAY The permutation was successfully generated.
  * @retval XMSS_ERR_NULL_POINTER permutation, index_permutation_seed or SEED was NULL.
 */
-XmssError generate_pseudorandom_permutation(
-    HASH_ABSTRACTION(const xmss_hashes *const restrict hash_functions)
-    uint32_t *permutation, uint32_t num_elements, const XmssNativeValue256 *index_permutation_seed,
-    const XmssNativeValue256 *SEED);
+LIBXMSS_STATIC
+XmssError generate_pseudorandom_permutation(HASH_FUNCTIONS_PARAMETER uint32_t *permutation,
+    uint32_t num_elements, const XmssNativeValue256 *index_permutation_seed, const XmssNativeValue256 *SEED);
 
 #endif /* !XMSS_INDEX_PERMUTATION_H_INCLUDED */

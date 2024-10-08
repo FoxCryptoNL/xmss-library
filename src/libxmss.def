@@ -1,0 +1,35 @@
+; SPDX-FileCopyrightText: 2023 Fox Crypto B.V.
+; SPDX-License-Identifier: MIT
+
+; This file lists all exported functions in the resulting Windows DLL when compiled with
+; XMSS_ENABLE_SIGNING=ON (default) and BUILD_SHARED_LIBS=ON.
+
+EXPORTS
+    xmss_error_to_description
+    xmss_error_to_name
+    xmss_library_get_version
+    xmss_verification_check
+    xmss_verification_init
+    xmss_verification_update
+    
+    xmss_calculate_public_key_part
+    xmss_context_initialize
+    xmss_export_public_key
+    xmss_finish_calculate_public_key
+    xmss_free_key_context
+    xmss_free_key_generation_context
+    xmss_free_signing_context
+    xmss_generate_private_key
+    xmss_generate_public_key
+    xmss_get_caching_in_public_key
+    xmss_get_signature_count
+    xmss_load_private_key
+    xmss_load_public_key
+    xmss_merge_signature_space
+    xmss_partition_signature_space
+    xmss_request_future_signatures
+    xmss_sign_message
+    xmss_verify_exported_public_key
+    xmss_verify_public_key
+    xmss_verify_private_key_stateless
+    xmss_verify_private_key_stateful

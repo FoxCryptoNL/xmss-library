@@ -44,7 +44,7 @@ int main(void)
 #endif
 
     /* This should always compile (this is what compat.h is for). */
-    STATIC_ASSERT(1, "");
+    XMSS_STATIC_ASSERT(1, "");
 
     /* <stdlib.h> was deliberately not included, so EXIT_XXX cannot be used. */
     return have_static_assert ? 0 : 1;

@@ -32,7 +32,7 @@
  * @details
  * These code words are used to provide values with high hamming distance to other enums' values.
  *
- * XMSS_DISTANT_VALUE_0 is guaranteed to be 0, allowing its use for values that should automatically be set when a
+ * #XMSS_DISTANT_VALUE_0 is guaranteed to be 0, allowing its use for values that should automatically be set when a
  * structure it contains is cleared to all-zeroes.
  */
 enum XmssDistantValues
@@ -92,13 +92,22 @@ enum XmssDistantValues
  *
  * @details
  * The values of these return codes are chosen from a Hamming(8,4) code to ensure bit error resilience.
- * Note that XMSS_DISTANT_VALUE_0 (with value 0) is unused to avoid accidentally confusing it with an uninitialized
+ * Note that #XMSS_DISTANT_VALUE_0 (with value 0) is unused to avoid accidentally confusing it with an uninitialized
  * value.
  *
  * @see XmssDistantValues
+ * @see xmss_error_to_description()
+ * @see xmss_error_to_name()
  */
 typedef enum XmssError
 {
+    /* NOTE to developers
+     * ==================
+     *
+     * Keep the enumeration-constants synchronized with xmss_error_to_name().
+     * Keep the Doxygen descriptions for the enumeration-constants synchronized with xmss_error_to_description().
+     */
+
     /* XMSS_DISTANT_VALUE_0 must not be used. */
 
     /** @brief Success. */
@@ -107,7 +116,8 @@ typedef enum XmssError
     /** @brief An unexpected NULL pointer was passed. */
     XMSS_ERR_NULL_POINTER = XMSS_DISTANT_VALUE_2,
 
-    /* XMSS_DISTANT_VALUE_3 is currently unused. */
+    /** @brief The signature is invalid. */
+    XMSS_ERR_INVALID_SIGNATURE = XMSS_DISTANT_VALUE_3,
 
     /** @brief A mismatch was detected between arguments. */
     XMSS_ERR_ARGUMENT_MISMATCH = XMSS_DISTANT_VALUE_4,
@@ -139,8 +149,23 @@ typedef enum XmssError
     /** @brief The key context does not have a public key loaded. */
     XMSS_ERR_NO_PUBLIC_KEY = XMSS_DISTANT_VALUE_D,
 
-    /** @brief A bit error was detected. (Note that bit errors can also cause different errors or segfaults.) */
-    XMSS_ERR_BIT_ERROR_DETECTED = XMSS_DISTANT_VALUE_E
+    /**
+     * @brief
+     * A fault was detected.
+     *
+     * @details
+     * Note that faults can also cause different errors or segfaults.
+     */
+    XMSS_ERR_FAULT_DETECTED = XMSS_DISTANT_VALUE_E,
+
+    /**
+     * @brief
+     * Function returned prematurely.
+     *
+     * @details
+     * Dummy value to initialize return value variables before the correct value is known.
+     */
+    XMSS_UNINITIALIZED = XMSS_DISTANT_VALUE_F
 } XmssError;
 
 /**
@@ -182,9 +207,9 @@ typedef enum XmssParameterSetOID
  * @brief
  * The tree depth for a given XMSS parameter set.
  *
- * @note The argument to XMSS_TREE_DEPTH will be evaluated multiple times.
+ * @note The argument to #XMSS_TREE_DEPTH() will be evaluated multiple times.
  *
- * @param param_set A valid XmssParameterSetOID.
+ * @param[in] param_set A valid #XmssParameterSetOID.
  */
 #define XMSS_TREE_DEPTH(param_set) \
     (((param_set) == XMSS_PARAM_SHA2_10_256 || (param_set) == XMSS_PARAM_SHAKE256_10_256) ? 10u : \
@@ -247,11 +272,11 @@ typedef enum XmssCacheType
  * For all supported parameter sets, both digests and seeds are 256-bit values.
  *
  * This type makes no guarantees about the memory alignment of the object.
- * It may be freely cast to and from a uint8_t pointer.
+ * It may be freely cast to and from a `uint8_t` pointer.
  *
  * This type ensures that both caller and callee agree on the amount of data pointed to.
  */
-typedef struct {
+typedef struct XmssValue256 {
     /** @brief The byte stream representation of the value. */
     uint8_t data[32];
 } XmssValue256;
@@ -266,7 +291,7 @@ typedef struct {
 #define XMSS_VALUE_256_WORDS 8
 
 /** @private */
-STATIC_ASSERT(XMSS_VALUE_256_WORDS == sizeof(XmssValue256) / sizeof(uint32_t),
+XMSS_STATIC_ASSERT(XMSS_VALUE_256_WORDS == sizeof(XmssValue256) / sizeof(uint32_t),
     "inconsistent value of XMSS_VALUE_256_WORDS");
 
 /**
@@ -282,29 +307,29 @@ STATIC_ASSERT(XMSS_VALUE_256_WORDS == sizeof(XmssValue256) / sizeof(uint32_t),
  * For all supported parameter sets, both digests and seeds are 256-bit values.
  *
  * This form of the value is guaranteed to be aligned on a 32-bit memory boundary.
- * It may be freely cast to and from a uint32_t pointer.
+ * It may be freely cast to and from a `uint32_t` pointer.
  *
  * May require byte swapping to get XmssValue256.
  *
  * This type ensures that both caller and callee agree on the amount of data pointed to.
  */
-typedef struct {
+typedef struct XmssNativeValue256 {
     /** @brief The contents of the value. */
     uint32_t data[XMSS_VALUE_256_WORDS];
 } XmssNativeValue256;
 
 /** @private */
-STATIC_ASSERT(sizeof(XmssNativeValue256) == sizeof(XmssValue256),
+XMSS_STATIC_ASSERT(sizeof(XmssNativeValue256) == sizeof(XmssValue256),
     "XmssNativeValue256 and XmssValue256 should have equal size");
 
 /**
  * @brief
  * A pointer to a buffer with a given size.
  */
-typedef struct {
-    /** @brief The size in bytes of the data. */
+typedef struct XmssBuffer {
+    /** @brief The size in bytes of `data`. */
     size_t data_size;
-    /** @brief The data. May be NULL if and only if data_size is 0. */
+    /** @brief The data. May be NULL if and only if `data_size` is 0. */
     uint8_t *data;
 } XmssBuffer;
 
@@ -315,15 +340,15 @@ typedef struct {
  * @details
  * All memory allocations will be done using this function.
  *
- * Note that the signature for this function type is identical to that of standard C realloc().
+ * Note that the signature for this function type is identical to that of standard C `realloc()`.
  *
- * @see xmss_context_initialize for additional information about memory management.
+ * @see xmss_context_initialize() for additional information about memory management.
  *
- * @param ptr   The pointer to an existing block of memory to resize, or NULL to allocate a new block of memory. If the
- *              memory reallocation function returns a non-NULL value that is different from this argument, this pointer
- *              is considered to no longer be valid and will neither be used nor passed to a memory deallocation
- *              function.
- * @param size  The requested size of the memory block.
+ * @param[in] ptr   The pointer to an existing block of memory to resize, or NULL to allocate a new block of memory. If
+ *                  the memory reallocation function returns a non-NULL value that is different from this argument, this
+ *                  pointer is considered to no longer be valid and will neither be used nor passed to a memory
+ *                  deallocation function.
+ * @param[in] size  The requested size of the memory block.
  * @returns The pointer to the memory block, which is at least size bytes large, or NULL if (re)allocation failed.
  */
 typedef void *(*XmssReallocFunction)(void *ptr, size_t size);
@@ -335,13 +360,13 @@ typedef void *(*XmssReallocFunction)(void *ptr, size_t size);
  * @details
  * All memory deallocations will be done using this function.
  *
- * Note that the signature for this function type is identical to that of standard C free().
+ * Note that the signature for this function type is identical to that of standard C `free()`.
  *
- * @see xmss_context_initialize for additional information about memory management.
+ * @see xmss_context_initialize() for additional information about memory management.
  *
- * @param ptr   The pointer to the allocated memory. After the memory deallocation function returns this pointer is
- *              considered to no longer be valid and will neither be used nor passed to a memory deallocation function
- *              again.
+ * @param[in] ptr   The pointer to the allocated memory. After the memory deallocation function returns this pointer is
+ *                  considered to no longer be valid and will neither be used nor passed to a memory deallocation
+ *                  function again.
  */
 typedef void (*XmssFreeFunction)(void *ptr);
 
@@ -352,8 +377,8 @@ typedef void (*XmssFreeFunction)(void *ptr);
  * @details
  * This function overwrites sensitive data in memory with zeros.
  *
- * @param ptr   The pointer to the object to erase.
- * @param size  The size in bytes of the object.
+ * @param[in] ptr   The pointer to the object to erase.
+ * @param[in] size  The size in bytes of the object.
  */
 typedef void (*XmssZeroizeFunction)(void *ptr, size_t size);
 

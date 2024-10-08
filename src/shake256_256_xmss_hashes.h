@@ -31,7 +31,18 @@
 
 #if XMSS_ENABLE_HASH_ABSTRACTION
 
+#   include "libxmss.h"
 #   include "xmss_hashes_base.h"
+
+#   if LIBXMSS
+
+/*
+ * It is not possible to forward-declare static data.
+ * For our amalgamated library source, we define the data right here and now.
+ */
+#       include "shake256_256_xmss_hashes.c"
+
+#   else
 
 /**
  * @brief
@@ -43,6 +54,8 @@
  * directly expand into the shake256_256_xxx() specialized hash functions.
  */
 extern const xmss_hashes shake256_256_xmss_hashes;
+
+#   endif
 
 #endif
 

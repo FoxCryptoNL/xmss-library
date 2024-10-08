@@ -9,8 +9,8 @@
  * @file
  * @brief Abstract typedefs for hash function overrides using the generic interface.
  * @details
- * Do not include this file. Instead, either include `override_sha256_generic.h` or
- * `override_shake256_256_generic.h`, depending on the specific algorithm you are overriding.
+ * Do not include this file. Instead, either include override_sha256_generic.h or
+ * override_shake256_256_generic.h, depending on the specific algorithm you are overriding.
  *
  * For each digest algorithm (SHA-256 and/or SHAKE256/256), the library allows to override its internal implementation.
  * The main use case is hardware acceleration.
@@ -20,9 +20,9 @@
  *
  * When supplying an override using the generic interface, you will have to implement 3 functions (per algorithm, that
  * you are overriding):
- * - initialize
- * - update
- * - finalize
+ * - #XmssGenericDigestInit
+ * - #XmssGenericDigestUpdate
+ * - #XmssGenericDigestFinalize
  *
  * The library guarantees that the functions are called in the following order:
  * - exactly one call to the initialize function
@@ -31,7 +31,7 @@
  *
  * Per thread, there will be at most one digest in use at any one time. This implies that if you use the library single
  * threaded, then you could use a single statically allocated context. In that case the opaque `context` parameter does
- * not necessarily have to be provided or used (i.e., it could simply be 0).
+ * not necessarily have to be provided or used (i.e., it could simply be NULL).
  *
  * **Error handling**
  *
@@ -84,10 +84,10 @@ typedef void *(*XmssGenericDigestInit)(void);
  * @param[in] context   An opaque context, i.e., the result of the most recent call to the initialization function on
  *                      this thread.
  * @param[in] data   The byte stream of additional data to be included in the message; may be NULL if and only if
- *                   data_length is zero.
- * @param[in] data_length   The number of bytes pointed to by data.
+ *                   `data_length` is zero.
+ * @param[in] data_length   The number of bytes pointed to by `data`.
  */
-typedef void (*XmssGenericDigestUpdate)(void *restrict context, const uint8_t *restrict data, size_t data_length);
+typedef void (*XmssGenericDigestUpdate)(void *context, const uint8_t *data, size_t data_length);
 
 /**
  * @brief
@@ -98,6 +98,6 @@ typedef void (*XmssGenericDigestUpdate)(void *restrict context, const uint8_t *r
  *                      this thread.
  * @param[out] digest   The output of the hash function.
  */
-typedef void (*XmssGenericDigestFinalize)(void *restrict context, XmssValue256 *restrict digest);
+typedef void (*XmssGenericDigestFinalize)(void *context, XmssValue256 *digest);
 
 #endif /* !XMSS_GENERIC_DIGEST_H_INCLUDED */

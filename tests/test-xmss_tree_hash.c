@@ -5,27 +5,20 @@
  * SPDX-FileContributor: Pepijn Westen
  */
 
+#include "libxmss.c"
+
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "config.h"
-
-#include "signing.h"
-#include "xmss_tree.h"
-
-#include "structures.h"
-#include "types.h"
-#include "xmss_hashes.h"
-#include "utils.h"
 
 
 int main(void)
 {
     bool success = true;
 
-    static XmssSigningContext *context_ptr_dynamic = NULL;
+    XmssSigningContext *context_ptr_dynamic = NULL;
 
 #if !XMSS_ENABLE_SHA256
     const uint32_t any_supported_param_set = XMSS_PARAM_SHAKE256_10_256;
@@ -67,12 +60,12 @@ int main(void)
         success = false;
         printf("xmss_tree_hash returned an unexpected result:\n");
         for (size_t i = 0; i < XMSS_VALUE_256_WORDS; i++) {
-            printf("%08x", root.data[i]);
+            printf("%08"PRIx32" ", root.data[i]);
         }
         printf("\n");
         printf("expected result:\n");
         for (size_t i = 0; i < XMSS_VALUE_256_WORDS; i++) {
-            printf("%08x", expected_root.data[i]);
+            printf("%08"PRIx32" ", expected_root.data[i]);
         }
 
     }

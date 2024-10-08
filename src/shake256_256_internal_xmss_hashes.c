@@ -11,6 +11,7 @@
  * XMSS hash functions for SHAKE256/256 using the internal interface.
  */
 
+#include <stdio.h>
 #include "config.h"
 
 #if !XMSS_ENABLE_SHAKE256_256
@@ -58,8 +59,8 @@
 /** @brief Block size of SHAKE256-256. */
 #define SHAKE256_256_BLOCK_SIZE (r / 8)
 
-/** @brief Size of the Keccak state array. */
-#define KECCAK_STATE_ARRAY_SIZE (b / 8)
+/** @private */
+XMSS_STATIC_ASSERT(b / 8 == KECCAK_STATE_ARRAY_SIZE, "Incorrect Keccak state array size.");
 
 /**
  * @brief
@@ -91,32 +92,135 @@ static const uint8_t pad_end = 0x80;
  * @param[in]   message   Input message; may be NULL if and only if message_length is 0.
  * @param[in]   message_length   Input message length in bytes.
  */
-static void shake256_256_process_message_final(uint64_t *restrict const A, uint_fast16_t offset,
-    const uint8_t *restrict message, size_t message_length)
+static void shake256_256_process_message_final(uint64_t *const A, uint_fast8_t offset, const uint8_t *message,
+    size_t message_length)
 {
     /* NIST FIPS 202, Section 4, Step 2 & 4 & 6 and Section 3.1.2 */
     if (offset > 0 && offset + message_length >= r / 8) {
-        sponge_absorb(A, offset, message, r / 8 - offset);
-        keccak_p_1600_24(A);
+        xmss_sponge_absorb(A, offset, message, r / 8 - offset);
+        xmss_keccak_p_1600_24(A);
         message += SHAKE256_256_BLOCK_SIZE - offset;
         message_length -= SHAKE256_256_BLOCK_SIZE - offset;
         offset = 0;
     }
     for (; message_length >= SHAKE256_256_BLOCK_SIZE;
             message += SHAKE256_256_BLOCK_SIZE , message_length -= SHAKE256_256_BLOCK_SIZE ) {
-        sponge_absorb(A, 0, message, SHAKE256_256_BLOCK_SIZE);
-        keccak_p_1600_24(A);
+        xmss_sponge_absorb(A, 0, message, SHAKE256_256_BLOCK_SIZE);
+        xmss_keccak_p_1600_24(A);
     }
 
     /* NIST FIPS 202, Section 4, Step 1 & 3 & 6 */
-    sponge_absorb(A, offset, message, (uint_fast16_t)message_length);
-    sponge_absorb(A, offset + (uint_fast16_t)message_length, &pad_xof, sizeof(pad_xof));
-    sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
-    keccak_p_1600_24(A);
+    if (message_length > 0)
+    {
+        xmss_sponge_absorb(A, offset, message, (uint_fast8_t)message_length);
+    }
+    xmss_sponge_absorb(A, offset + (uint_fast8_t)message_length, &pad_xof, sizeof(pad_xof));
+    xmss_sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
+    xmss_keccak_p_1600_24(A);
 }
 
-void shake256_256_digest(XmssValue256 *const restrict digest, const uint8_t *const restrict message,
-    const size_t message_length)
+void shake256_256_F(XmssNativeValue256 *const native_digest, const Input_F *const input)
+{
+    uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
+    xmss_sponge_absorb_native(A, (const uint32_t *)input, TO_WORDS(INPUT_F_DATA_SIZE));
+    xmss_sponge_absorb(A, 96, &pad_xof, sizeof(pad_xof));
+    xmss_sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
+    xmss_keccak_p_1600_24(A);
+    xmss_sponge_squeeze_native(native_digest, A);
+}
+
+void shake256_256_H(XmssNativeValue256 *const native_digest, const Input_H *const input)
+{
+    uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
+    xmss_sponge_absorb_native(A, (const uint32_t *)input, TO_WORDS(INPUT_H_DATA_SIZE));
+    xmss_sponge_absorb(A, 128, &pad_xof, sizeof(pad_xof));
+    xmss_sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
+    xmss_keccak_p_1600_24(A);
+    xmss_sponge_squeeze_native(native_digest, A);
+}
+
+void shake256_256_H_msg_init(XmssHMsgCtx *const ctx, const Input_H_msg *const input)
+{
+    memset(ctx->shake256_256_ctx.shake256_256_state_array, 0, sizeof(ctx->shake256_256_ctx.shake256_256_state_array));
+    xmss_sponge_absorb_native(ctx->shake256_256_ctx.shake256_256_state_array, (const uint32_t *)input,
+        TO_WORDS(sizeof(Input_H_msg)));
+    ctx->shake256_256_ctx.offset.value = sizeof(Input_H_msg);
+}
+
+void shake256_256_H_msg_update(XmssHMsgCtx *const ctx, const uint8_t *const part, size_t part_length,
+    const uint8_t *volatile *const part_verify)
+{
+    const uint8_t *volatile const volatile_part = part;
+    size_t offset = 0;
+    uint_fast8_t remaining_space_in_block = SHAKE256_256_BLOCK_SIZE - ctx->shake256_256_ctx.offset.value;
+    if (remaining_space_in_block < SHAKE256_256_BLOCK_SIZE && part_length >= remaining_space_in_block) {
+        xmss_sponge_absorb(ctx->shake256_256_ctx.shake256_256_state_array, ctx->shake256_256_ctx.offset.value,
+            volatile_part + offset, remaining_space_in_block);
+        xmss_keccak_p_1600_24(ctx->shake256_256_ctx.shake256_256_state_array);
+        offset += remaining_space_in_block;
+        part_length -= remaining_space_in_block;
+        ctx->shake256_256_ctx.offset.value = 0;
+    }
+    while (part_length >= SHAKE256_256_BLOCK_SIZE) {
+        xmss_sponge_absorb(ctx->shake256_256_ctx.shake256_256_state_array, 0, volatile_part + offset,
+            SHAKE256_256_BLOCK_SIZE);
+        xmss_keccak_p_1600_24(ctx->shake256_256_ctx.shake256_256_state_array);
+        offset += SHAKE256_256_BLOCK_SIZE;
+        part_length -= SHAKE256_256_BLOCK_SIZE;
+    }
+    if (part_length > 0)
+    {
+        xmss_sponge_absorb(ctx->shake256_256_ctx.shake256_256_state_array, ctx->shake256_256_ctx.offset.value,
+            volatile_part + offset, (uint_fast8_t)part_length);
+        ctx->shake256_256_ctx.offset.value += (uint_fast8_t)part_length;
+    }
+
+    if (part_verify != NULL)
+    {
+        *part_verify = volatile_part;
+    }
+}
+
+void shake256_256_H_msg_finalize(XmssNativeValue256 *const native_digest, XmssHMsgCtx *const ctx)
+{
+    shake256_256_process_message_final(ctx->shake256_256_ctx.shake256_256_state_array,
+        ctx->shake256_256_ctx.offset.value, NULL, 0);
+    xmss_sponge_squeeze_native(native_digest, ctx->shake256_256_ctx.shake256_256_state_array);
+}
+
+void shake256_256_PRF(XmssNativeValue256 *const native_digest, const Input_PRF *const input)
+{
+    uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
+    xmss_sponge_absorb_native(A, (const uint32_t *)input, TO_WORDS(INPUT_PRF_DATA_SIZE));
+    xmss_sponge_absorb(A, INPUT_PRF_DATA_SIZE, &pad_xof, sizeof(pad_xof));
+    xmss_sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
+    xmss_keccak_p_1600_24(A);
+    xmss_sponge_squeeze_native(native_digest, A);
+}
+
+#if XMSS_ENABLE_SIGNING
+
+void shake256_256_PRFkeygen(XmssNativeValue256 *const native_digest, const Input_PRFkeygen *const input)
+{
+    uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
+    xmss_sponge_absorb_native(A, (const uint32_t *)input, TO_WORDS(INPUT_PRF_KEYGEN_DATA_SIZE));
+    xmss_sponge_absorb(A, INPUT_PRF_KEYGEN_DATA_SIZE, &pad_xof, sizeof(pad_xof));
+    xmss_sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
+    xmss_keccak_p_1600_24(A);
+    xmss_sponge_squeeze_native(native_digest, A);
+}
+
+void shake256_256_PRFindex(XmssNativeValue256 *const native_digest, const Input_PRFindex *const input)
+{
+    uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
+    xmss_sponge_absorb_native(A, (const uint32_t *)input, TO_WORDS(INPUT_PRF_INDEX_DATA_SIZE));
+    xmss_sponge_absorb(A, INPUT_PRF_INDEX_DATA_SIZE, &pad_xof, sizeof(pad_xof));
+    xmss_sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
+    xmss_keccak_p_1600_24(A);
+    xmss_sponge_squeeze_native(native_digest, A);
+}
+
+void shake256_256_digest(XmssValue256 *const digest, const uint8_t *const message, const size_t message_length)
 {
     /*
      * See: NIST FIPS 202
@@ -133,11 +237,10 @@ void shake256_256_digest(XmssValue256 *const restrict digest, const uint8_t *con
     shake256_256_process_message_final(A, 0, message, message_length);
 
     /* NIST FIPS 202, Section 4, Step 7 & 8 & 9; we do not need Step 10 */
-    sponge_squeeze(digest, A);
+    xmss_sponge_squeeze(digest, A);
 }
 
-void shake256_256_native_digest(XmssNativeValue256 *restrict native_digest, const uint32_t *restrict words,
-    size_t word_count)
+void shake256_256_native_digest(XmssNativeValue256 *const  native_digest, const uint32_t *words, size_t word_count)
 {
     /* NIST FIPS 202, Section 4, Step 5 and Section 3.1.2 */
     uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
@@ -145,77 +248,29 @@ void shake256_256_native_digest(XmssNativeValue256 *restrict native_digest, cons
     /* NIST FIPS 202, Section 4, Step 2 & 4 & 6 and Section 3.1.2 */
     for (; word_count >= TO_WORDS(SHAKE256_256_BLOCK_SIZE);
             words += TO_WORDS(SHAKE256_256_BLOCK_SIZE), word_count -= TO_WORDS(SHAKE256_256_BLOCK_SIZE)) {
-        sponge_absorb_native(A, words, TO_WORDS(SHAKE256_256_BLOCK_SIZE));
-        keccak_p_1600_24(A);
+        xmss_sponge_absorb_native(A, words, TO_WORDS(SHAKE256_256_BLOCK_SIZE));
+        xmss_keccak_p_1600_24(A);
     }
 
     /* NIST FIPS 202, Section 4, Step 1 & 3 & 6 */
-    sponge_absorb_native(A, words, (uint_fast16_t)word_count);
-    sponge_absorb(A, (uint_fast16_t)(word_count * sizeof(uint32_t)), &pad_xof, sizeof(pad_xof));
-    sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
-    keccak_p_1600_24(A);
+    if (word_count > 0)
+    {
+        xmss_sponge_absorb_native(A, words, (uint_fast8_t)word_count);
+    }
+    xmss_sponge_absorb(A, (uint_fast8_t)(word_count * sizeof(uint32_t)), &pad_xof, sizeof(pad_xof));
+    xmss_sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
+    xmss_keccak_p_1600_24(A);
 
     /* NIST FIPS 202, Section 4, Step 7 & 8 & 9; we do not need Step 10 */
-    sponge_squeeze_native(native_digest, A);
+    xmss_sponge_squeeze_native(native_digest, A);
 }
 
-void shake256_256_F(XmssNativeValue256 *restrict const native_digest, const Input_F *restrict const input)
-{
-    uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
-    sponge_absorb_native(A, (const uint32_t *)input, TO_WORDS(INPUT_F_DATA_SIZE));
-    sponge_absorb(A, 96, &pad_xof, sizeof(pad_xof));
-    sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
-    keccak_p_1600_24(A);
-    sponge_squeeze_native(native_digest, A);
-}
+#endif /* XMSS_ENABLE_SIGNING */
 
-void shake256_256_H(XmssNativeValue256 *restrict const native_digest, const Input_H *restrict const input)
-{
-    uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
-    sponge_absorb_native(A, (const uint32_t *)input, TO_WORDS(INPUT_H_DATA_SIZE));
-    sponge_absorb(A, 128, &pad_xof, sizeof(pad_xof));
-    sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
-    keccak_p_1600_24(A);
-    sponge_squeeze_native(native_digest, A);
-}
-
-void shake256_256_H_msg(XmssNativeValue256 *restrict const native_digest, const Input_H_msg *restrict const input,
-    const uint8_t *restrict message, size_t message_length)
-{
-    uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
-    /* We can directly use the size of Input_H_msg because it never contains any SHA-256 padding. */
-    sponge_absorb_native(A, (const uint32_t *)input, TO_WORDS(sizeof(Input_H_msg)));
-    shake256_256_process_message_final(A, sizeof(Input_H_msg), message, message_length);
-    sponge_squeeze_native(native_digest, A);
-}
-
-void shake256_256_PRF(XmssNativeValue256 *restrict const native_digest, const Input_PRF *restrict const input)
-{
-    uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
-    sponge_absorb_native(A, (const uint32_t *)input, TO_WORDS(INPUT_PRF_DATA_SIZE));
-    sponge_absorb(A, INPUT_PRF_DATA_SIZE, &pad_xof, sizeof(pad_xof));
-    sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
-    keccak_p_1600_24(A);
-    sponge_squeeze_native(native_digest, A);
-}
-
-void shake256_256_PRFkeygen(XmssNativeValue256 *restrict const native_digest,
-    const Input_PRFkeygen *restrict const input)
-{
-    uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
-    sponge_absorb_native(A, (const uint32_t *)input, TO_WORDS(INPUT_PRF_KEYGEN_DATA_SIZE));
-    sponge_absorb(A, INPUT_PRF_KEYGEN_DATA_SIZE, &pad_xof, sizeof(pad_xof));
-    sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
-    keccak_p_1600_24(A);
-    sponge_squeeze_native(native_digest, A);
-}
-
-void shake256_256_PRFindex(XmssNativeValue256 *restrict const native_digest, const Input_PRFindex *restrict const input)
-{
-    uint64_t A[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)] = { 0 };
-    sponge_absorb_native(A, (const uint32_t *)input, TO_WORDS(INPUT_PRF_INDEX_DATA_SIZE));
-    sponge_absorb(A, INPUT_PRF_INDEX_DATA_SIZE, &pad_xof, sizeof(pad_xof));
-    sponge_absorb(A, SHAKE256_256_BLOCK_SIZE - sizeof(pad_end), &pad_end, sizeof(pad_end));
-    keccak_p_1600_24(A);
-    sponge_squeeze_native(native_digest, A);
-}
+#ifndef DOXYGEN
+#undef b
+#undef c
+#undef r
+#undef SHAKE256_256_BLOCK_SIZE
+#undef KECCAK_STATE_ARRAY_SIZE
+#endif

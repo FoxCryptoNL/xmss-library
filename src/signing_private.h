@@ -60,15 +60,6 @@
  */
 #define XMSS_VERSION_CURRENT_PUBLIC_KEY_STORAGE 1
 
-/**
- * @brief
- * The number of digests in a WOTS+ private or uncompressed public key.
- *
- * @details
- * This holds for all supported parameter sets, see RFC 8391, Section 5.2 and NIST SP 800-208, Section 5.1 and 5.3.
- */
-#define XMSS_WOTSP_LEN 67
-
 /** The state of a context. */
 typedef enum XmssInitializationState
 {
@@ -113,10 +104,17 @@ struct XmssSigningContext {
     /** @brief Explicit padding. */
     uint32_t pad_;
 #if XMSS_ENABLE_HASH_ABSTRACTION
-    /** The hash functions used. */
-    xmss_hashes hash_functions;
+    /**
+     * @brief
+     * The hash functions used.
+     *
+     * This is simply used as a cached value for xmss_get_hash_functions(parameter_set).
+     * Redundancy is not needed; if this pointer gets corrupted, then either the integrity checks will fail
+     * or (more likely) the software will simply crash.
+     */
+    const xmss_hashes *hash_functions;
 #else
-    void (*pad_hash_abstraction[8])();
+    void *pad_hash_functions;
 #endif
     /**
      * The realloc() function to use.
@@ -136,7 +134,7 @@ struct XmssSigningContext {
 };
 
 /** @private */
-STATIC_ASSERT(sizeof(XmssSigningContext) == XMSS_SIGNING_CONTEXT_SIZE, "XMSS_SIGNING_CONTEXT_SIZE mismatch.");
+XMSS_STATIC_ASSERT(sizeof(XmssSigningContext) == XMSS_SIGNING_CONTEXT_SIZE, "XMSS_SIGNING_CONTEXT_SIZE mismatch.");
 
 struct XmssInternalCache {
     /**
@@ -177,22 +175,23 @@ struct XmssInternalCache {
 };
 
 /** @private */
-STATIC_ASSERT(sizeof(XmssInternalCache) == XMSS_INTERNAL_CACHE_SIZE(XMSS_CACHE_NONE,
+XMSS_STATIC_ASSERT(sizeof(XmssInternalCache) == XMSS_INTERNAL_CACHE_SIZE(XMSS_CACHE_NONE,
     XMSS_TREE_DEPTH(XMSS_PARAM_SHA2_10_256), XMSS_PARAM_SHA2_10_256), "XMSS_INTERNAL_CACHE_SIZE mismatch.");
 /** @private */
-STATIC_ASSERT(sizeof(XmssInternalCache) == XMSS_INTERNAL_CACHE_SIZE(XMSS_CACHE_NONE,
+XMSS_STATIC_ASSERT(sizeof(XmssInternalCache) == XMSS_INTERNAL_CACHE_SIZE(XMSS_CACHE_NONE,
     0,  XMSS_PARAM_SHA2_10_256), "XMSS_INTERNAL_CACHE_SIZE mismatch.");
 /** @private */
-STATIC_ASSERT(sizeof(XmssInternalCache) == XMSS_INTERNAL_CACHE_SIZE(XMSS_CACHE_SINGLE_LEVEL,
+XMSS_STATIC_ASSERT(sizeof(XmssInternalCache) == XMSS_INTERNAL_CACHE_SIZE(XMSS_CACHE_SINGLE_LEVEL,
     XMSS_TREE_DEPTH(XMSS_PARAM_SHA2_10_256), XMSS_PARAM_SHA2_10_256), "XMSS_INTERNAL_CACHE_SIZE mismatch.");
 /** @private */
-STATIC_ASSERT(sizeof(XmssInternalCache) + sizeof(XmssValue256) * 4 == XMSS_INTERNAL_CACHE_SIZE(XMSS_CACHE_SINGLE_LEVEL,
+XMSS_STATIC_ASSERT(sizeof(XmssInternalCache) + sizeof(XmssValue256) * 4
+    == XMSS_INTERNAL_CACHE_SIZE(XMSS_CACHE_SINGLE_LEVEL,
     XMSS_TREE_DEPTH(XMSS_PARAM_SHA2_10_256) - 2, XMSS_PARAM_SHA2_10_256), "XMSS_INTERNAL_CACHE_SIZE mismatch.");
 /** @private */
-STATIC_ASSERT(sizeof(XmssInternalCache) + sizeof(XmssValue256) * 3 == XMSS_INTERNAL_CACHE_SIZE(XMSS_CACHE_TOP,
+XMSS_STATIC_ASSERT(sizeof(XmssInternalCache) + sizeof(XmssValue256) * 3 == XMSS_INTERNAL_CACHE_SIZE(XMSS_CACHE_TOP,
     XMSS_TREE_DEPTH(XMSS_PARAM_SHA2_10_256) - 1, XMSS_PARAM_SHA2_10_256), "XMSS_INTERNAL_CACHE_SIZE mismatch.");
 /** @private */
-STATIC_ASSERT(sizeof(XmssInternalCache) + sizeof(XmssValue256) * 7 ==
+XMSS_STATIC_ASSERT(sizeof(XmssInternalCache) + sizeof(XmssValue256) * 7 ==
         XMSS_INTERNAL_CACHE_SIZE(XMSS_CACHE_TOP, XMSS_TREE_DEPTH(XMSS_PARAM_SHA2_10_256) - 2, XMSS_PARAM_SHA2_10_256),
     "XMSS_INTERNAL_CACHE_SIZE mismatch.");
 
@@ -202,14 +201,14 @@ STATIC_ASSERT(sizeof(XmssInternalCache) + sizeof(XmssValue256) * 7 ==
  *
  * @note The arguments to XMSS_CACHE_ENTRY_OFFSET will be evaluated multiple times.
  *
- * @param cache_type    The cache type that is used.
- * @param cache_level   The cache level that is used.
- * @param param_set     The parameter set of the key for which the cache is used.
- * @param entry_level   The level of the entry being looked up. For single level caching entry_level==cache_level, since
- *                      only one level is cached. For top caching cache_level <= entry_level <=
- *                      XMSS_TREE_DEPTH(param_set).
- * @param entry_index   The index of the entry within its level, counting from left to right in the tree (i.e. by
- *                      increasing address). 0 <= entry_index < 2 ** (XMSS_TREE_DEPTH(param_set) - entry_level).
+ * @param[in] cache_type    The cache type that is used.
+ * @param[in] cache_level   The cache level that is used.
+ * @param[in] param_set     The parameter set of the key for which the cache is used.
+ * @param[in] entry_level   The level of the entry being looked up. For single level caching entry_level==cache_level,
+ *                          since only one level is cached. For top caching cache_level <= entry_level <=
+ *                          XMSS_TREE_DEPTH(param_set).
+ * @param[in] entry_index   The index of the entry within its level, counting from left to right in the tree (i.e. by
+ *                          increasing address). 0 <= entry_index < 2 ** (XMSS_TREE_DEPTH(param_set) - entry_level).
  */
 #define XMSS_CACHE_ENTRY_OFFSET(cache_type, cache_level, param_set, entry_level, entry_index) \
     ((cache_type) == XMSS_CACHE_TOP ? \
@@ -227,14 +226,14 @@ STATIC_ASSERT(sizeof(XmssInternalCache) + sizeof(XmssValue256) * 7 ==
  * @details
  * Partial structure. Do not use this without any additional protections!
  */
-typedef struct {
+typedef struct XmssPrivateKeyStatelessContents {
     /*
      * Note that the scheme identifier is not included in this convenience structure. It is added manually to aid in
      * 64-bits padding of the containing structures.
      */
     /** @brief The PRF_SEED for this private key. */
     XmssNativeValue256 prf_seed;
-    /** @brief The seed for private key generation. */
+    /** @brief The seed for private key generation. NIST terminology: SK_SEED */
     XmssNativeValue256 private_key_seed;
     /**
      * @brief
@@ -267,7 +266,7 @@ typedef struct {
 } XmssPrivateKeyStatelessContents;
 
 /** @private */
-STATIC_ASSERT(sizeof(XmssPrivateKeyStatelessContents) == XMSS_PRIVATE_KEY_STATELESS_PART_SIZE,
+XMSS_STATIC_ASSERT(sizeof(XmssPrivateKeyStatelessContents) == XMSS_PRIVATE_KEY_STATELESS_PART_SIZE,
     "XMSS_PRIVATE_KEY_STATELESS_PART_SIZE mismatch");
 
 /**
@@ -285,7 +284,7 @@ typedef XmssPrivateKeyStatelessContents XmssPrivateKeyStatelessContentsBigEndian
  * @details
  * Partial structure. Do not use without any additional protections!
  */
-typedef struct {
+typedef struct XmssPrivateKeyStatefulContents {
     /** @brief The lowest non-obfuscated index in this private key partition that may be used for signing. */
     uint32_t partition_start;
     /**
@@ -300,7 +299,7 @@ typedef struct {
 } XmssPrivateKeyStatefulContents;
 
 /** @private */
-STATIC_ASSERT(sizeof(XmssPrivateKeyStatefulContents) == XMSS_PRIVATE_KEY_STATEFUL_PART_SIZE,
+XMSS_STATIC_ASSERT(sizeof(XmssPrivateKeyStatefulContents) == XMSS_PRIVATE_KEY_STATEFUL_PART_SIZE,
     "XMSS_PRIVATE_KEY_STATEFUL_PART_SIZE mismatch");
 
 /**
@@ -391,10 +390,10 @@ struct XmssKeyContext {
 };
 
 /** @private */
-STATIC_ASSERT(sizeof(XmssKeyContext) == XMSS_KEY_CONTEXT_SIZE(XMSS_PARAM_SHA2_10_256, XMSS_INDEX_OBFUSCATION_OFF),
+XMSS_STATIC_ASSERT(sizeof(XmssKeyContext) == XMSS_KEY_CONTEXT_SIZE(XMSS_PARAM_SHA2_10_256, XMSS_INDEX_OBFUSCATION_OFF),
     "XMSS_KEY_CONTEXT_SIZE mismatch");
 /** @private */
-STATIC_ASSERT(sizeof(XmssKeyContext) + (1 << 10) * sizeof(uint32_t) ==
+XMSS_STATIC_ASSERT(sizeof(XmssKeyContext) + (1 << 10) * sizeof(uint32_t) ==
     XMSS_KEY_CONTEXT_SIZE(XMSS_PARAM_SHA2_10_256, XMSS_INDEX_OBFUSCATION_ON),
     "XMSS_KEY_CONTEXT_SIZE mismatch");
 
@@ -439,15 +438,15 @@ struct XmssKeyGenerationContext {
      */
     struct {
         /** @brief The XmssGenerationState of this calculation partition. */
-        _Atomic uint32_t state;
+        ATOMIC uint32_t state;
     } partition_states[];
 };
 
 /** @private */
-STATIC_ASSERT(sizeof(XmssKeyGenerationContext) == XMSS_KEY_GENERATION_CONTEXT_SIZE(0),
+XMSS_STATIC_ASSERT(sizeof(XmssKeyGenerationContext) == XMSS_KEY_GENERATION_CONTEXT_SIZE(0),
     "XMSS_KEY_GENERATION_CONTEXT_SIZE mismatch");
 /** @private */
-STATIC_ASSERT(sizeof(XmssKeyGenerationContext) + (sizeof(uint32_t))
+XMSS_STATIC_ASSERT(sizeof(XmssKeyGenerationContext) + (sizeof(uint32_t))
     == XMSS_KEY_GENERATION_CONTEXT_SIZE(1), "XMSS_KEY_GENERATION_CONTEXT_SIZE mismatch");
 
 /**
@@ -466,7 +465,7 @@ STATIC_ASSERT(sizeof(XmssKeyGenerationContext) + (sizeof(uint32_t))
  * data_size member of XmssPrivateKeyStatelessBlob must be set to the exact size of XmssPrivateKeyStateless. If that is
  * the case, the data member of an XmssPrivateKeyStatelessBlob may freely be cast to an XmssPrivateKeyStateless.
  */
-typedef struct {
+typedef struct XmssPrivateKeyStateless {
     /**
      * @brief
      * Integrity digest over the entire structure's contents, with the exception of this member.
@@ -489,16 +488,16 @@ typedef struct {
 } XmssPrivateKeyStateless;
 
 /** @private */
-STATIC_ASSERT(sizeof(XmssPrivateKeyStatelessBlob) + sizeof(XmssPrivateKeyStateless) ==
+XMSS_STATIC_ASSERT(sizeof(XmssPrivateKeyStatelessBlob) + sizeof(XmssPrivateKeyStateless) ==
     XMSS_PRIVATE_KEY_STATELESS_BLOB_SIZE, "XMSS_PRIVATE_KEY_STATELESS_BLOB_SIZE mismatch");
 /** @private */
-STATIC_ASSERT(offsetof(XmssPrivateKeyStateless, integrity) == 0,
+XMSS_STATIC_ASSERT(offsetof(XmssPrivateKeyStateless, integrity) == 0,
     "XmssPrivateKeyStateless integrity digest must be the first field in the blob data");
 /** @private */
-STATIC_ASSERT(offsetof(XmssPrivateKeyStateless, private_key_stateless_version) == sizeof(XmssValue256),
+XMSS_STATIC_ASSERT(offsetof(XmssPrivateKeyStateless, private_key_stateless_version) == sizeof(XmssValue256),
     "XmssPrivateKeyStateless version must be the second field in the blob");
 /** @private */
-STATIC_ASSERT(offsetof(XmssPrivateKeyStateless, scheme_identifier) ==
+XMSS_STATIC_ASSERT(offsetof(XmssPrivateKeyStateless, scheme_identifier) ==
     offsetof(XmssPrivateKeyStateless, private_key_stateless_version) + sizeof(uint32_t),
     "XmssPrivateKeyStateless scheme identifier must be the third field in the blob");
 
@@ -518,7 +517,7 @@ STATIC_ASSERT(offsetof(XmssPrivateKeyStateless, scheme_identifier) ==
  * data_size member of XmssPrivateKeyStatefulBlob must be set to the exact size of XmssPrivateKeyStateful. If that is
  * the case, the data member of an XmssPrivateKeyStatefulBlob may freely be cast to an XmssPrivateKeyStateful.
  */
-typedef struct {
+typedef struct XmssPrivateKeyStateful {
     /**
      * @brief
      * Integrity digest over the entire structure's contents, except for this member.
@@ -561,17 +560,17 @@ typedef struct {
 } XmssPrivateKeyStateful;
 
 /** @private */
-STATIC_ASSERT(sizeof(XmssPrivateKeyStatefulBlob) + sizeof(XmssPrivateKeyStateful) ==
+XMSS_STATIC_ASSERT(sizeof(XmssPrivateKeyStatefulBlob) + sizeof(XmssPrivateKeyStateful) ==
     XMSS_PRIVATE_KEY_STATEFUL_BLOB_SIZE, "XMSS_PRIVATE_KEY_STATEFUL_BLOB_SIZE mismatch");
 /** @private */
-STATIC_ASSERT(offsetof(XmssPrivateKeyStateful, integrity) == 0,
+XMSS_STATIC_ASSERT(offsetof(XmssPrivateKeyStateful, integrity) == 0,
     "XmssPrivateKeyStateful integrity must be the first field in the blob");
 /** @private */
-STATIC_ASSERT(offsetof(XmssPrivateKeyStateful, private_key_stateful_version) ==
+XMSS_STATIC_ASSERT(offsetof(XmssPrivateKeyStateful, private_key_stateful_version) ==
     offsetof(XmssPrivateKeyStateful, integrity) + sizeof(XmssValue256),
     "XmssPrivateKeyStateful private_key_stateful_version must be the second field in the blob");
 /** @private */
-STATIC_ASSERT(offsetof(XmssPrivateKeyStateful, scheme_identifier) ==
+XMSS_STATIC_ASSERT(offsetof(XmssPrivateKeyStateful, scheme_identifier) ==
     offsetof(XmssPrivateKeyStateful, private_key_stateful_version) + sizeof(uint32_t),
     "XmssPrivateKeyStateful scheme identifier must be the third field in the blob");
 
@@ -593,7 +592,7 @@ STATIC_ASSERT(offsetof(XmssPrivateKeyStateful, scheme_identifier) ==
  * data_size member of XmssPublicKeyInternalBlob must be set to the exact size of XmssPublicKeyInternal. If that is the
  * case, the data member of an XmssPublicKeyInternalBlob may freely be cast to an XmssPublicKeyInternal.
  */
-typedef struct {
+typedef struct XmssPublicKeyInternal {
     /**
      * @brief
      * Integrity digest over the entire structure's contents, with the exception of this member.
@@ -628,7 +627,7 @@ typedef struct {
      */
     XmssValue256 digest_of_private_key_static_blob;
     /** @brief The public key root. */
-    XmssValue256 public_key;
+    XmssValue256 root;
     /** @brief The type of caching stored within this public key. This must be a valid value of type XmssCacheType. */
     uint32_t cache_type;
     /**
@@ -654,44 +653,46 @@ typedef struct {
  *
  * @note The arguments of XMSS_PUBLIC_KEY_INTERNAL_SIZE will be evaluated multiple times.
  *
- * @param cache_type    The cache type that is used.
- * @param cache_level   The cache level that is to be held.
- * @param param_set     The parameter set of the key for which the cache will be used.
+ * @param[in] cache_type    The cache type that is used.
+ * @param[in] cache_level   The cache level that is to be held.
+ * @param[in] param_set     The parameter set of the key for which the cache will be used.
  * @see xmss_generate_public_key for more information about the cache type and level.
  */
 #define XMSS_PUBLIC_KEY_INTERNAL_SIZE(cache_type, cache_level, param_set) \
-        (sizeof(XmssPublicKeyInternal) + sizeof(XmssValue256) * XMSS_CACHE_ENTRY_COUNT(cache_type, cache_level, param_set))
+        (sizeof(XmssPublicKeyInternal) + sizeof(XmssValue256) \
+        * XMSS_CACHE_ENTRY_COUNT(cache_type, cache_level, param_set))
 
 /** @private */
-STATIC_ASSERT(sizeof(XmssPublicKeyInternalBlob) + sizeof(XmssPublicKeyInternal) ==
+XMSS_STATIC_ASSERT(sizeof(XmssPublicKeyInternalBlob) + sizeof(XmssPublicKeyInternal) ==
         XMSS_PUBLIC_KEY_INTERNAL_BLOB_SIZE(XMSS_CACHE_NONE, XMSS_TREE_DEPTH(XMSS_PARAM_SHA2_10_256) - 1,
         XMSS_PARAM_SHA2_10_256), "XMSS_PUBLIC_KEY_INTERNAL_BLOB_SIZE mismatch");
 /** @private */
-STATIC_ASSERT(sizeof(XmssPublicKeyInternalBlob) + sizeof(XmssPublicKeyInternal)  ==
+XMSS_STATIC_ASSERT(sizeof(XmssPublicKeyInternalBlob) + sizeof(XmssPublicKeyInternal)  ==
     XMSS_PUBLIC_KEY_INTERNAL_BLOB_SIZE(XMSS_CACHE_SINGLE_LEVEL,
         XMSS_TREE_DEPTH(XMSS_PARAM_SHA2_10_256), XMSS_PARAM_SHA2_10_256),
         "XMSS_PUBLIC_KEY_INTERNAL_BLOB_SIZE mismatch");
 /** @private */
-STATIC_ASSERT(sizeof(XmssPublicKeyInternal) + sizeof(XmssPublicKeyInternalBlob) + sizeof(XmssValue256) * 3 ==
+XMSS_STATIC_ASSERT(sizeof(XmssPublicKeyInternal) + sizeof(XmssPublicKeyInternalBlob) + sizeof(XmssValue256) * 3 ==
     XMSS_PUBLIC_KEY_INTERNAL_BLOB_SIZE(XMSS_CACHE_TOP,
         XMSS_TREE_DEPTH(XMSS_PARAM_SHA2_10_256) - 1, XMSS_PARAM_SHA2_10_256),
         "XMSS_PUBLIC_KEY_INTERNAL_BLOB_SIZE mismatch");
 /** @private */
-STATIC_ASSERT(sizeof(XmssPublicKeyInternalBlob) + sizeof(XmssPublicKeyInternal) + (1 << 2) * sizeof(XmssValue256) ==
-        XMSS_PUBLIC_KEY_INTERNAL_BLOB_SIZE(XMSS_CACHE_SINGLE_LEVEL, XMSS_TREE_DEPTH(XMSS_PARAM_SHA2_10_256) - 2,
+XMSS_STATIC_ASSERT(sizeof(XmssPublicKeyInternalBlob) + sizeof(XmssPublicKeyInternal) + (1 << 2) * sizeof(XmssValue256)
+        == XMSS_PUBLIC_KEY_INTERNAL_BLOB_SIZE(XMSS_CACHE_SINGLE_LEVEL, XMSS_TREE_DEPTH(XMSS_PARAM_SHA2_10_256) - 2,
         XMSS_PARAM_SHA2_10_256), "XMSS_PUBLIC_KEY_INTERNAL_BLOB_SIZE mismatch");
 /** @private */
-STATIC_ASSERT(sizeof(XmssPublicKeyInternalBlob) + sizeof(XmssPublicKeyInternal) + ((1 << 4) - 1) * sizeof(XmssValue256) ==
+XMSS_STATIC_ASSERT(sizeof(XmssPublicKeyInternalBlob) + sizeof(XmssPublicKeyInternal) + ((1 << 4) - 1)
+        * sizeof(XmssValue256) ==
         XMSS_PUBLIC_KEY_INTERNAL_BLOB_SIZE(XMSS_CACHE_TOP, XMSS_TREE_DEPTH(XMSS_PARAM_SHA2_10_256) - 3,
         XMSS_PARAM_SHA2_10_256), "XMSS_PUBLIC_KEY_INTERNAL_BLOB_SIZE mismatch");
 /** @private */
-STATIC_ASSERT(offsetof(XmssPublicKeyInternal, integrity) == 0,
+XMSS_STATIC_ASSERT(offsetof(XmssPublicKeyInternal, integrity) == 0,
     "XmssPublicKeyInternal integrity digest must be the first field in the blob");
 /** @private */
-STATIC_ASSERT(offsetof(XmssPublicKeyInternal, public_key_version) == sizeof(XmssValue256),
+XMSS_STATIC_ASSERT(offsetof(XmssPublicKeyInternal, public_key_version) == sizeof(XmssValue256),
     "XmssPublicKeyInternal version must be the second field in the blob");
 /** @private */
-STATIC_ASSERT(offsetof(XmssPublicKeyInternal, scheme_identifier) ==
+XMSS_STATIC_ASSERT(offsetof(XmssPublicKeyInternal, scheme_identifier) ==
     offsetof(XmssPublicKeyInternal, public_key_version) + sizeof(uint32_t),
     "XmssPublicKeyInternal scheme identifier must be the third field in the blob");
 

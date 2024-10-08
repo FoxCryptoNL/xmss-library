@@ -5,31 +5,23 @@
  * SPDX-FileContributor: Max Fillinger
  */
 
+#include "libxmss.c"
+
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "config.h"
-#include "wotsp.c"
-
-#include "xmss_hashes.h"
-#if XMSS_ENABLE_SHA256
-#include "sha256_xmss_hashes.h"
-#endif
-#if XMSS_ENABLE_SHAKE256_256
-#include "shake256_256_xmss_hashes.h"
-#endif
-
 static void print_output(const XmssNativeValue256 *output, const XmssNativeValue256 *expected_output)
 {
     printf("Output:    ");
     for (int i = 0; i < XMSS_VALUE_256_WORDS; i++) {
-        printf("0x%08x ", output->data[i]);
+        printf("0x%08"PRIx32" ", output->data[i]);
     }
     printf("\nExpected:  ");
     for (int i = 0; i < XMSS_VALUE_256_WORDS; i++) {
-        printf("0x%08x ", expected_output->data[i]);
+        printf("0x%08"PRIx32" ", expected_output->data[i]);
     }
     printf("\n");
 }
@@ -43,7 +35,9 @@ static bool test_chain_with_sha256(void)
     Input_PRF input_prf = INIT_INPUT_PRF;
 
     prepare_input_prf_for_chain(&input_prf, &prf_seed, 0);
-    chain(HASH_ABSTRACTION(&sha256_xmss_hashes) &output, &input_prf, &input, 2, 3);
+    DEFINE_HASH_FUNCTIONS;
+    INITIALIZE_HASH_FUNCTIONS(XMSS_PARAM_SHA2_10_256);
+    chain(HASH_FUNCTIONS &output, &input_prf, &input, 2, 3);
 
     /* Expected output calculated with Frans' C# implementation: github.com/dorssel/dotnet-xmss. */
     const XmssNativeValue256 expected_output = { {
@@ -69,7 +63,9 @@ static bool test_chain_with_shake256_256(void)
     Input_PRF input_prf = INIT_INPUT_PRF;
 
     prepare_input_prf_for_chain(&input_prf, &prf_seed, 0);
-    chain(HASH_ABSTRACTION(&shake256_256_xmss_hashes) &output, &input_prf, &input, 2, 3);
+    DEFINE_HASH_FUNCTIONS;
+    INITIALIZE_HASH_FUNCTIONS(XMSS_PARAM_SHAKE256_10_256);
+    chain(HASH_FUNCTIONS &output, &input_prf, &input, 2, 3);
 
     /* Expected output calculated with Frans' C# implementation: github.com/dorssel/dotnet-xmss. */
     const XmssNativeValue256 expected_output = { {
@@ -86,7 +82,7 @@ static bool test_chain_with_shake256_256(void)
 }
 #endif /* XMSS_ENABLE_SHAKE256_256 */
 
-int main()
+int main(void)
 {
     bool success = true;
 #if XMSS_ENABLE_SHA256

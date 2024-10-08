@@ -6,31 +6,24 @@
  * SPDX-FileContributor: Pepijn Westen
  */
 
+#include "libxmss.c"
+
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "config.h"
-#include "xmss_tree.c"
-
-#include "xmss_hashes.h"
-#if XMSS_ENABLE_SHA256
-#include "sha256_xmss_hashes.h"
-#endif
-#if XMSS_ENABLE_SHAKE256_256
-#include "shake256_256_xmss_hashes.h"
-#endif
 
 static void print_output(const XmssNativeValue256 *output, const XmssNativeValue256 *expected_output)
 {
     printf("Output:    ");
     for (int i = 0; i < XMSS_VALUE_256_WORDS; i++) {
-        printf("0x%08x ", output->data[i]);
+        printf("0x%08"PRIx32" ", output->data[i]);
     }
     printf("\nExpected:  ");
     for (int i = 0; i < XMSS_VALUE_256_WORDS; i++) {
-        printf("0x%08x ", expected_output->data[i]);
+        printf("0x%08"PRIx32" ", expected_output->data[i]);
     }
     printf("\n");
 }
@@ -120,7 +113,9 @@ static bool test_rand_hash_with_sha256(void)
 
     XmssNativeValue256 output = {0};
 
-    xmss_ltree(HASH_ABSTRACTION(&sha256_xmss_hashes) &output, &public_key, (ADRS*)adrs, &seed);
+    DEFINE_HASH_FUNCTIONS;
+    INITIALIZE_HASH_FUNCTIONS(XMSS_PARAM_SHA2_10_256);
+    xmss_ltree(HASH_FUNCTIONS &output, &public_key, (ADRS*)adrs, &seed);
 
     const bool success = memcmp(&output, &expected_output, sizeof(XmssNativeValue256)) == 0;
     printf("rand hash function test %s for SHA256!\n", success ? "succeeded" : "failed");
@@ -217,7 +212,9 @@ static bool test_rand_hash_with_shake256_256(void)
 
     XmssNativeValue256 output = {0};
 
-    xmss_ltree(HASH_ABSTRACTION(&shake256_256_xmss_hashes) &output, &public_key, (ADRS*)adrs, &seed);
+    DEFINE_HASH_FUNCTIONS;
+    INITIALIZE_HASH_FUNCTIONS(XMSS_PARAM_SHAKE256_10_256);
+    xmss_ltree(HASH_FUNCTIONS &output, &public_key, (ADRS*)adrs, &seed);
 
     const bool success = memcmp(&output, &expected_output, sizeof(XmssNativeValue256)) == 0;
     printf("rand hash function test %s for SHAKE256_256!\n", success ? "succeeded" : "failed");
@@ -230,7 +227,7 @@ static bool test_rand_hash_with_shake256_256(void)
 #endif /* XMSS_ENABLE_SHAKE256_256 */
 
 
-int main()
+int main(void)
 {
     bool success = true;
 #if XMSS_ENABLE_SHA256

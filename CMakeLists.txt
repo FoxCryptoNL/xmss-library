@@ -4,7 +4,7 @@
 # CMake 3.22.1 is the version installed with Ubuntu 22.04.1.
 cmake_minimum_required(VERSION 3.22.1 FATAL_ERROR)
 
-project(xmss-library VERSION 1.0.0 LANGUAGES C)
+project(xmss-library VERSION 2.0.0 LANGUAGES C)
 
 # All compiler options are in a separate file
 include("cmake/compiler_options.cmake")
@@ -47,6 +47,14 @@ else()
     endif()
 endif()
 
+# When set to OFF (default), static libraries are built.
+# When set to ON, shared libraries are built.
+option(BUILD_SHARED_LIBS "Build shared libraries instead of static ones." OFF)
+
+# When set to ON (default), both the full library (including signing) and a verification-only library are built.
+# When set to OFF, just the verification-only library is built.
+option(XMSS_ENABLE_SIGNING "Enable signing support in the library." ON)
+
 # The C tests are part of the early validation of the compiler/platform combination with the XMSS library and must not
 # be disabled for normal testing or production builds.
 # The full test suite contains several tests that require hash overrides that will completely fail these tests, though.
@@ -65,10 +73,22 @@ else()
     set(XMSS_ENABLE_SHA256 ON)
 endif()
 
+if(XMSS_SHA256 STREQUAL "Default")
+    set(XMSS_ENABLE_SHA256_DEFAULT ON)
+else()
+    set(XMSS_ENABLE_SHA256_DEFAULT OFF)
+endif()
+
 if(XMSS_SHAKE256_256 STREQUAL "Disabled")
     set(XMSS_ENABLE_SHAKE256_256 OFF)
 else()
     set(XMSS_ENABLE_SHAKE256_256 ON)
+endif()
+
+if(XMSS_SHAKE256_256 STREQUAL "Default")
+    set(XMSS_ENABLE_SHAKE256_256_DEFAULT ON)
+else()
+    set(XMSS_ENABLE_SHAKE256_256_DEFAULT OFF)
 endif()
 
 if(NOT XMSS_ENABLE_SHA256 AND NOT XMSS_ENABLE_SHAKE256_256)
@@ -139,7 +159,14 @@ try_compile(XMSS_CAN_USE_EXTENSION_STATIC_ASSERT ${CMAKE_CURRENT_BINARY_DIR}
 configure_file(include/xmss_config.in.h include/xmss_config.h NO_SOURCE_PERMISSIONS)
 configure_file(src/config.in.h src/config.h NO_SOURCE_PERMISSIONS)
 
+add_library(config INTERFACE)
+target_include_directories(config
+    INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/include
+    INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/src
+)
+
 enable_testing()
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 add_subdirectory(include)
 add_subdirectory(src)

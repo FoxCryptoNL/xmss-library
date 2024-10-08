@@ -11,57 +11,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "test-xmss_hashes.h"
 
-#include "endianness.h"
-#include "xmss_hashes.h"
+#if XMSS_ENABLE_HASH_ABSTRACTION
 
+extern const xmss_hashes *const hash_functions;
 
-/* Test all counts from 0 up to and including 3 full blocks (we use the bigger block size of SHAKE256). */
-#define MAX_WORD_COUNT (3 * 136 / sizeof(uint32_t))
-
-static bool test_native_digest_count(size_t count)
-{
-    /* Setup */
-    uint32_t words[MAX_WORD_COUNT];
-
-    for (uint32_t i = 0; i < count; ++i) {
-        /* some non-trivial data */
-        words[i] = (uint32_t)(count * 0x01234567 + i * 0xfedcba98);
-    }
-
-    /* Test */
-
-    XmssNativeValue256 native_digest;
-    xmss_native_digest(HASH_ABSTRACTION(test_xmss_hashes) &native_digest, words, count);
-    XmssValue256 digest;
-    native_to_big_endian_256(&digest, &native_digest);
-
-    /* Verification */
-
-    uint8_t verification_message[MAX_WORD_COUNT * sizeof(uint32_t)];
-    native_to_big_endian(verification_message, words, (uint_fast16_t)count);
-    XmssValue256 verification_digest;
-    xmss_digest(HASH_ABSTRACTION(test_xmss_hashes) &verification_digest, verification_message,
-        count * sizeof(uint32_t));
-
-    return memcmp(&digest, &verification_digest, sizeof(XmssValue256)) == 0;
-}
-
-
-static bool test_native_digest()
-{
-    bool success = true;
-
-    for (size_t word_count = 33; word_count <= MAX_WORD_COUNT; ++word_count) {
-        if (!test_native_digest_count(word_count)) {
-            fprintf(stderr, "Failed test_native_digest for word count %u\n", (unsigned int)word_count);
-            success = false;
-        }
-    }
-
-    return success;
-}
+#endif
 
 
 /* Some 32 unique bytes of test data */
@@ -121,7 +76,7 @@ static void toByte(uint8_t *dst, uint64_t x)
 }
 
 
-static bool test_F()
+static bool test_F(void)
 {
     /* Setup */
 
@@ -135,7 +90,7 @@ static bool test_F()
     /* Test */
 
     XmssNativeValue256 native_digest;
-    xmss_F(HASH_ABSTRACTION(test_xmss_hashes) &native_digest, &input);
+    xmss_F(HASH_FUNCTIONS &native_digest, &input);
     XmssValue256 digest;
     native_to_big_endian_256(&digest, &native_digest);
 
@@ -146,8 +101,7 @@ static bool test_F()
     memcpy(verification_message + 32, &test_KEY, 32);
     memcpy(verification_message + 64, &test_M, 32);
     XmssValue256 verification_digest;
-    xmss_digest(HASH_ABSTRACTION(test_xmss_hashes) &verification_digest, verification_message,
-        sizeof(verification_message));
+    reference_digest(&verification_digest, verification_message, sizeof(verification_message));
 
     return memcmp(&digest, &verification_digest, sizeof(XmssValue256)) == 0;
 
@@ -156,7 +110,7 @@ static bool test_F()
 }
 
 
-static bool test_H()
+static bool test_H(void)
 {
     /* Setup */
 
@@ -170,7 +124,7 @@ static bool test_H()
     /* Test */
 
     XmssNativeValue256 native_digest;
-    xmss_H(HASH_ABSTRACTION(test_xmss_hashes) &native_digest, &input);
+    xmss_H(HASH_FUNCTIONS &native_digest, &input);
     XmssValue256 digest;
     native_to_big_endian_256(&digest, &native_digest);
 
@@ -181,8 +135,7 @@ static bool test_H()
     memcpy(verification_message + 32, &test_KEY, 32);
     memcpy(verification_message + 64, test_M, 64);
     XmssValue256 verification_digest;
-    xmss_digest(HASH_ABSTRACTION(test_xmss_hashes) &verification_digest, verification_message,
-        sizeof(verification_message));
+    reference_digest(&verification_digest, verification_message, sizeof(verification_message));
 
     return memcmp(&digest, &verification_digest, sizeof(XmssValue256)) == 0;
 
@@ -215,8 +168,11 @@ static bool test_H_msg_length(size_t message_length)
 
     /* Test */
 
+    XmssHMsgCtx ctx;
     XmssNativeValue256 native_digest;
-    xmss_H_msg(HASH_ABSTRACTION(test_xmss_hashes) &native_digest, &input, test_message, message_length);
+    xmss_H_msg_init(HASH_FUNCTIONS &ctx, &input);
+    xmss_H_msg_update(HASH_FUNCTIONS &ctx, test_message, message_length, NULL);
+    xmss_H_msg_finalize(HASH_FUNCTIONS &native_digest, &ctx);
     XmssValue256 digest;
     native_to_big_endian_256(&digest, &native_digest);
 
@@ -236,7 +192,7 @@ static bool test_H_msg_length(size_t message_length)
     memcpy(verification_message + 128, test_message, message_length);
 
     XmssValue256 verification_digest;
-    xmss_digest(HASH_ABSTRACTION(test_xmss_hashes) &verification_digest, verification_message, 128 + message_length);
+    reference_digest(&verification_digest, verification_message, 128 + message_length);
 
     free(test_message);
     free(verification_message);
@@ -247,7 +203,7 @@ static bool test_H_msg_length(size_t message_length)
 #   undef test_Root
 }
 
-static bool test_H_msg()
+static bool test_H_msg(void)
 {
     bool success = true;
 
@@ -262,8 +218,7 @@ static bool test_H_msg()
     return success;
 }
 
-
-static bool test_PRF()
+static bool test_PRF(void)
 {
     /* Setup */
 
@@ -277,7 +232,7 @@ static bool test_PRF()
     /* Test */
 
     XmssNativeValue256 native_digest;
-    xmss_PRF(HASH_ABSTRACTION(test_xmss_hashes) &native_digest, &input);
+    xmss_PRF(HASH_FUNCTIONS &native_digest, &input);
     XmssValue256 digest;
     native_to_big_endian_256(&digest, &native_digest);
 
@@ -292,8 +247,7 @@ static bool test_PRF()
     memcpy(verification_message + 32, &test_KEY, 32);
     memcpy(verification_message + 64, &test_ADRS, 32);
     XmssValue256 verification_digest;
-    xmss_digest(HASH_ABSTRACTION(test_xmss_hashes) &verification_digest, verification_message,
-        sizeof(verification_message));
+    reference_digest(&verification_digest, verification_message, sizeof(verification_message));
 
     return memcmp(&digest, &verification_digest, sizeof(XmssValue256)) == 0;
 
@@ -302,7 +256,10 @@ static bool test_PRF()
 }
 
 
-static bool test_PRFkeygen()
+#if XMSS_ENABLE_SIGNING
+
+
+static bool test_PRFkeygen(void)
 {
     /* Setup */
 
@@ -319,7 +276,7 @@ static bool test_PRFkeygen()
 
     XmssNativeValue256 native_digest;
     XmssValue256 digest;
-    xmss_PRFkeygen(HASH_ABSTRACTION(test_xmss_hashes) &native_digest, &input);
+    xmss_PRFkeygen(HASH_FUNCTIONS &native_digest, &input);
     native_to_big_endian_256(&digest, &native_digest);
 
     /*
@@ -334,8 +291,7 @@ static bool test_PRFkeygen()
     memcpy(verification_message + 64, &test_SEED, 32);
     memcpy(verification_message + 96, &test_ADRS, 32);
     XmssValue256 verification_digest;
-    xmss_digest(HASH_ABSTRACTION(test_xmss_hashes) &verification_digest, verification_message,
-        sizeof(verification_message));
+    reference_digest(&verification_digest, verification_message, sizeof(verification_message));
 
     return memcmp(&digest, &verification_digest, sizeof(XmssValue256)) == 0;
 
@@ -345,7 +301,7 @@ static bool test_PRFkeygen()
 }
 
 
-static bool test_PRFindex()
+static bool test_PRFindex(void)
 {
     /* Setup */
 
@@ -361,7 +317,7 @@ static bool test_PRFindex()
 
     XmssNativeValue256 native_digest;
     XmssValue256 digest;
-    xmss_PRFindex(HASH_ABSTRACTION(test_xmss_hashes) &native_digest, &input);
+    xmss_PRFindex(HASH_FUNCTIONS &native_digest, &input);
     native_to_big_endian_256(&digest, &native_digest);
 
     /*
@@ -376,8 +332,7 @@ static bool test_PRFindex()
     memcpy(verification_message + 64, &test_SEED, 32);
     toByte(verification_message + 96, 42);
     XmssValue256 verification_digest;
-    xmss_digest(HASH_ABSTRACTION(test_xmss_hashes) &verification_digest, verification_message,
-        sizeof(verification_message));
+    reference_digest(&verification_digest, verification_message, sizeof(verification_message));
 
     return memcmp(&digest, &verification_digest, sizeof(XmssValue256)) == 0;
 
@@ -386,17 +341,68 @@ static bool test_PRFindex()
 }
 
 
+/* Test all counts from 0 up to and including 3 full blocks (we use the bigger block size of SHAKE256). */
+#define MAX_WORD_COUNT (3 * 136 / sizeof(uint32_t))
+
+static bool test_native_digest_count(size_t count)
+{
+    /* Setup */
+    uint32_t words[MAX_WORD_COUNT];
+
+    for (uint32_t i = 0; i < count; ++i) {
+        /* some non-trivial data */
+        words[i] = (uint32_t)(count * 0x01234567 + i * 0xfedcba98);
+    }
+
+    /* Test */
+
+    XmssNativeValue256 native_digest;
+    xmss_native_digest(HASH_FUNCTIONS &native_digest, words, count);
+    XmssValue256 digest;
+    native_to_big_endian_256(&digest, &native_digest);
+
+    /* Verification */
+
+    uint8_t verification_message[MAX_WORD_COUNT * sizeof(uint32_t)];
+    native_to_big_endian(verification_message, words, (uint_fast16_t)count);
+    XmssValue256 verification_digest;
+    reference_digest(&verification_digest, verification_message, count * sizeof(uint32_t));
+
+    return memcmp(&digest, &verification_digest, sizeof(XmssValue256)) == 0;
+}
+
+
+static bool test_native_digest(void)
+{
+    bool success = true;
+
+    for (size_t word_count = 33; word_count <= MAX_WORD_COUNT; ++word_count) {
+        if (!test_native_digest_count(word_count)) {
+            fprintf(stderr, "Failed test_native_digest for word count %u\n", (unsigned int)word_count);
+            success = false;
+        }
+    }
+
+    return success;
+}
+
+
+#endif /* XMSS_ENABLE_SIGNING */
+
+
 int main(void)
 {
     bool success = true;
 
-    success = success && test_native_digest();
     success = success && test_F();
     success = success && test_H();
     success = success && test_H_msg();
     success = success && test_PRF();
+#if XMSS_ENABLE_SIGNING
     success = success && test_PRFkeygen();
     success = success && test_PRFindex();
+    success = success && test_native_digest();
+#endif
 
     return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -29,18 +29,11 @@
 #include <string.h>
 
 #include "endianness.h"
+#include "libxmss.h"
 #include "override_sha256_internal.h"
+#include "sha256_internal_H0.h"
 #include "utils.h"
 #include "xmss_hashes_base.h"
-
-/**
- * @brief
- * The initial native SHA-256 hash value as defined by the standard.
- *
- * @details
- * See NIST FIPS 180-4, Section 5.3.3.
- */
-extern const XmssNativeValue256 sha256_H0;
 
 /**
  * @brief
@@ -60,8 +53,145 @@ extern const XmssNativeValue256 sha256_H0;
  * @param[in]   prefix_length    Number of bytes already processed before calling this function; must be a multiple
  *                               of the block size (64 bytes).
  */
-void sha256_process_message_final(XmssNativeValue256 *restrict native_digest, const uint8_t *restrict message,
-    size_t message_length, uint_fast16_t prefix_length);
+LIBXMSS_STATIC
+void sha256_process_message_final(XmssNativeValue256 *native_digest, const uint8_t *message, size_t message_length,
+    uint64_t prefix_length);
+
+/**
+ * @brief
+ * Internal helper function for F(), H_msg(), and PRF().
+ *
+ * @details
+ * Defined within this header file to enable inlining, if the compiler chooses to do so.
+ *
+ * @param[out] native_digest   Output of the (possibly intermediate) native hash value.
+ * @param[in] input   Points to 32 uint32_t values, 2 SHA-256 blocks.
+ */
+static inline void sha256_2_blocks(XmssNativeValue256 *const native_digest, const uint32_t *const input)
+{
+    *native_digest = sha256_H0;
+    xmss_sha256_process_block(native_digest, input);
+    xmss_sha256_process_block(native_digest, input + TO_WORDS(SHA256_BLOCK_SIZE));
+}
+
+/**
+ * @brief
+ * Internal helper function for H(), PRFkeygen(), and PRFindex().
+ *
+ * @details
+ * Defined within this header file to enable inlining, if the compiler chooses to do so.
+ *
+ * @param[out] native_digest   Output of the (possibly intermediate) native hash value.
+ * @param[in] input   Points to 48 uint32_t values, 3 SHA-256 blocks.
+ */
+static inline void sha256_3_blocks(XmssNativeValue256 *const native_digest, const uint32_t *const input)
+{
+    *native_digest = sha256_H0;
+    xmss_sha256_process_block(native_digest, input);
+    xmss_sha256_process_block(native_digest, input + TO_WORDS(SHA256_BLOCK_SIZE));
+    xmss_sha256_process_block(native_digest, input + 2 * TO_WORDS(SHA256_BLOCK_SIZE));
+}
+
+/**
+ * @copydoc prototype_F
+ * @see prototype_F
+ *
+ * @details
+ * This is the specialization for the SHA-256 algorithm using the internal interface.
+ */
+static inline void sha256_F(XmssNativeValue256 *const native_digest, const Input_F *const input)
+{
+    sha256_2_blocks(native_digest, (const uint32_t *)input);
+}
+
+/**
+ * @copydoc prototype_H
+ * @see prototype_H
+ *
+ * @details
+ * This is the specialization for the SHA-256 algorithm using the internal interface.
+ */
+static inline void sha256_H(XmssNativeValue256 *const native_digest, const Input_H *const input)
+{
+    sha256_3_blocks(native_digest, (const uint32_t *)input);
+}
+
+/**
+ * @copydoc prototype_H_msg_init
+ * @see prototype_H_msg_init
+ *
+ * @details
+ * This is the specialization for the SHA-256 algorithm using the internal interface.
+ */
+static inline void sha256_H_msg_init(XmssHMsgCtx *const ctx, const Input_H_msg *const input)
+{
+    sha256_2_blocks(&ctx->sha256_ctx.intermediate_hash, (const uint32_t *)input);
+    ctx->sha256_ctx.bytes_in_partial_block.value = 0;
+    ctx->sha256_ctx.bytes_hashed = sizeof(Input_H_msg);
+}
+
+/**
+ * @copydoc prototype_H_msg_update
+ * @see prototype_H_msg_update
+ *
+ * @details
+ * This is the specialization for the SHA-256 algorithm using the internal interface.
+ */
+LIBXMSS_STATIC
+void sha256_H_msg_update(XmssHMsgCtx *ctx, const uint8_t *part, size_t part_length,
+    const uint8_t *volatile *part_verify);
+
+/**
+ * @copydoc prototype_H_msg_finalize
+ * @see prototype_H_msg_finalize
+ *
+ * @details
+ * This is the specialization for the SHA-256 algorithm using the internal interface.
+ */
+static inline void sha256_H_msg_finalize(XmssNativeValue256 *const native_digest, XmssHMsgCtx *const ctx)
+{
+    sha256_process_message_final(&ctx->sha256_ctx.intermediate_hash, ctx->sha256_ctx.partial_block,
+        ctx->sha256_ctx.bytes_in_partial_block.value, ctx->sha256_ctx.bytes_hashed);
+    *native_digest = ctx->sha256_ctx.intermediate_hash;
+}
+
+/**
+ * @copydoc prototype_PRF
+ * @see prototype_PRF
+ *
+ * @details
+ * This is the specialization for the SHA-256 algorithm using the internal interface.
+ */
+static inline void sha256_PRF(XmssNativeValue256 *const native_digest, const Input_PRF *const input)
+{
+    sha256_2_blocks(native_digest, (const uint32_t *)input);
+}
+
+#if XMSS_ENABLE_SIGNING
+
+/**
+ * @copydoc prototype_PRFkeygen
+ * @see prototype_PRFkeygen
+ *
+ * @details
+ * This is the specialization for the SHA-256 algorithm using the internal interface.
+ */
+static inline void sha256_PRFkeygen(XmssNativeValue256 *const native_digest, const Input_PRFkeygen *const input)
+{
+    sha256_3_blocks(native_digest, (const uint32_t *)input);
+}
+
+/**
+ * @copydoc prototype_PRFindex
+ * @see prototype_PRFindex
+ *
+ * @details
+ * This is the specialization for the SHA-256 algorithm using the internal interface.
+ */
+static inline void sha256_PRFindex(XmssNativeValue256 *const native_digest, const Input_PRFindex *const input)
+{
+    sha256_3_blocks(native_digest, (const uint32_t *)input);
+}
 
 /**
  * @copydoc prototype_digest
@@ -72,8 +202,7 @@ void sha256_process_message_final(XmssNativeValue256 *restrict native_digest, co
  *
  * This function implements the SHA-256($M$) function as defined by NIST FIPS 180-4, Section 6.2.
  */
-static inline void sha256_digest(XmssValue256 *restrict digest, const uint8_t *restrict const message,
-    const size_t message_length)
+static inline void sha256_digest(XmssValue256 *digest, const uint8_t *const message, const size_t message_length)
 {
     /*
      * See: NIST FIPS 180-4, Section 6.2
@@ -87,7 +216,7 @@ static inline void sha256_digest(XmssValue256 *restrict digest, const uint8_t *r
     XmssNativeValue256 native_digest;
 
     /* See NIST FIPS 180-4, Section 6.2.1, Step 1 */
-    native_256_copy(&native_digest, &sha256_H0);
+    native_digest = sha256_H0;
 
     sha256_process_message_final(&native_digest, message, message_length, 0);
 
@@ -102,120 +231,9 @@ static inline void sha256_digest(XmssValue256 *restrict digest, const uint8_t *r
  * @details
  * This is the specialization for the SHA-256 algorithm using the internal interface.
  */
-void sha256_native_digest(XmssNativeValue256 *restrict native_digest, const uint32_t *restrict words,
-    size_t word_count);
+LIBXMSS_STATIC
+void sha256_native_digest(XmssNativeValue256 *native_digest, const uint32_t *words, size_t word_count);
 
-/**
- * @brief
- * Internal helper function for F(), H_msg(), and PRF().
- *
- * @details
- * Defined within this header file to enable inlining, if the compiler chooses to do so.
- *
- * @param[out] native_digest   Output of the (possibly intermediate) native hash value.
- * @param[in] input   Points to 32 uint32_t values, 2 SHA-256 blocks.
- */
-static inline void sha256_2_blocks(XmssNativeValue256 *restrict const native_digest,
-    const uint32_t *restrict const input)
-{
-    native_256_copy(native_digest, &sha256_H0);
-    sha256_process_block(native_digest, input);
-    sha256_process_block(native_digest, input + TO_WORDS(SHA256_BLOCK_SIZE));
-}
-
-/**
- * @brief
- * Internal helper function for H(), PRFkeygen(), and PRFindex().
- *
- * @details
- * Defined within this header file to enable inlining, if the compiler chooses to do so.
- *
- * @param[out] native_digest   Output of the (possibly intermediate) native hash value.
- * @param[in] input   Points to 48 uint32_t values, 3 SHA-256 blocks.
- */
-static inline void sha256_3_blocks(XmssNativeValue256 *restrict const native_digest,
-    const uint32_t *restrict const input)
-{
-    native_256_copy(native_digest, &sha256_H0);
-    sha256_process_block(native_digest, input);
-    sha256_process_block(native_digest, input + TO_WORDS(SHA256_BLOCK_SIZE));
-    sha256_process_block(native_digest, input + 2 * TO_WORDS(SHA256_BLOCK_SIZE));
-}
-
-/**
- * @copydoc prototype_F
- * @see prototype_F
- *
- * @details
- * This is the specialization for the SHA-256 algorithm using the internal interface.
- */
-static inline void sha256_F(XmssNativeValue256 *restrict const native_digest, const Input_F *restrict const input)
-{
-    sha256_2_blocks(native_digest, (const uint32_t *)input);
-}
-
-/**
- * @copydoc prototype_H
- * @see prototype_H
- *
- * @details
- * This is the specialization for the SHA-256 algorithm using the internal interface.
- */
-static inline void sha256_H(XmssNativeValue256 *restrict const native_digest, const Input_H *restrict const input)
-{
-    sha256_3_blocks(native_digest, (const uint32_t *)input);
-}
-
-/**
- * @copydoc prototype_H_msg
- * @see prototype_H_msg
- *
- * @details
- * This is the specialization for the SHA-256 algorithm using the internal interface.
- */
-static inline void sha256_H_msg(XmssNativeValue256 *restrict const native_digest, const Input_H_msg *restrict const input,
-    const uint8_t *restrict const message, const size_t message_length)
-{
-    sha256_2_blocks(native_digest, (const uint32_t *)input);
-    sha256_process_message_final(native_digest, message, message_length, sizeof(Input_H_msg));
-}
-
-/**
- * @copydoc prototype_PRF
- * @see prototype_PRF
- *
- * @details
- * This is the specialization for the SHA-256 algorithm using the internal interface.
- */
-static inline void sha256_PRF(XmssNativeValue256 *restrict const native_digest, const Input_PRF *restrict const input)
-{
-    sha256_2_blocks(native_digest, (const uint32_t *)input);
-}
-
-/**
- * @copydoc prototype_PRFkeygen
- * @see prototype_PRFkeygen
- *
- * @details
- * This is the specialization for the SHA-256 algorithm using the internal interface.
- */
-static inline void sha256_PRFkeygen(XmssNativeValue256 *restrict const native_digest,
-    const Input_PRFkeygen *restrict const input)
-{
-    sha256_3_blocks(native_digest, (const uint32_t *)input);
-}
-
-/**
- * @copydoc prototype_PRFindex
- * @see prototype_PRFindex
- *
- * @details
- * This is the specialization for the SHA-256 algorithm using the internal interface.
- */
-static inline void sha256_PRFindex(XmssNativeValue256 *restrict const native_digest,
-    const Input_PRFindex *restrict const input)
-{
-    sha256_3_blocks(native_digest, (const uint32_t *)input);
-}
+#endif /* XMSS_ENABLE_SIGNING */
 
 #endif /* !XMSS_SHA256_INTERNAL_XMSS_HASHES_H_INCLUDED */

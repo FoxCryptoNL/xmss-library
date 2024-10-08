@@ -1,0 +1,13 @@
+; SPDX-FileCopyrightText: 2023 Fox Crypto B.V.
+; SPDX-License-Identifier: MIT
+
+; This file lists all exported functions in the resulting Windows DLL when compiled with
+; XMSS_ENABLE_SIGNING=OFF and BUILD_SHARED_LIBS=ON.
+
+EXPORTS
+    xmss_error_to_description
+    xmss_error_to_name
+    xmss_library_get_version
+    xmss_verification_check
+    xmss_verification_init
+    xmss_verification_update

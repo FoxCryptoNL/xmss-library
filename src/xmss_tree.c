@@ -17,11 +17,13 @@
 #include "xmss_tree.h"
 
 #include "endianness.h"
+#include "rand_hash.h"
+#include "signing_private.h"
 #include "types.h"
-#include "private.h"
 #include "utils.h"
-#include "wotsp.h"
+#include "wotsp_signing.h"
 #include "xmss_hashes.h"
+#include "xmss_ltree.h"
 
 /**
  * @brief
@@ -33,7 +35,7 @@
  * @brief
  * A Stack structure for use in the TreeHash algorithm.
 */
-typedef struct {
+typedef struct XmssTreeHashStack {
     /**
      * @brief
      * The number of items on the stack.
@@ -64,83 +66,7 @@ typedef struct {
     .count = 0,                                                               \
 }
 
-void rand_hash(HASH_ABSTRACTION(const xmss_hashes *const restrict hash_functions)
-        XmssNativeValue256 *digest_out, Input_PRF *rand_hash_state, const XmssNativeValue256 *left,
-        const XmssNativeValue256 *right)
-{
-    Input_H input_h = INIT_INPUT_H;
-
-    assert(digest_out != NULL);
-    assert(rand_hash_state != NULL);
-    assert(left != NULL);
-    assert(right != NULL);
-#if XMSS_ENABLE_HASH_ABSTRACTION
-    assert(hash_functions != NULL);
-#endif
-
-    /* Compute KEY for H. */
-    rand_hash_state->M.ADRS.typed.L_tree_Address.keyAndMask = 0;
-    xmss_PRF(HASH_ABSTRACTION(hash_functions) &input_h.KEY, rand_hash_state);
-
-    /* Compute and apply BM_0 to LEFT input node. */
-    rand_hash_state->M.ADRS.typed.L_tree_Address.keyAndMask = 1;
-    xmss_PRF(HASH_ABSTRACTION(hash_functions) &input_h.M[0], rand_hash_state);
-    for (size_t i = 0; i < XMSS_VALUE_256_WORDS; i++) {
-        input_h.M[0].data[i] ^= left->data[i];
-    }
-
-    /* Compute and apply BM_1 to RIGHT input node. */
-    rand_hash_state->M.ADRS.typed.L_tree_Address.keyAndMask = 2;
-    xmss_PRF(HASH_ABSTRACTION(hash_functions) &input_h.M[1], rand_hash_state);
-    for (size_t i = 0; i < XMSS_VALUE_256_WORDS; i++) {
-        input_h.M[1].data[i] ^= right->data[i];
-    }
-
-    /* Compute output */
-    xmss_H(HASH_ABSTRACTION(hash_functions) digest_out, &input_h);
-}
-
-void
-xmss_ltree(HASH_ABSTRACTION(const xmss_hashes *const restrict hash_functions)
-        XmssNativeValue256 *restrict output, WotspPublicKey *restrict pk, ADRS *restrict adrs,
-        const XmssNativeValue256 *restrict seed)
-{
-    Input_PRF ltree_state = INIT_INPUT_PRF;
-    size_t len = XMSS_WOTSP_LEN;
-
-    assert(output != NULL);
-    assert(pk != NULL);
-    assert(adrs != NULL);
-    assert(seed != NULL);
-#if XMSS_ENABLE_HASH_ABSTRACTION
-    assert(hash_functions != NULL);
-#endif
-
-    memcpy(&ltree_state.M.ADRS, adrs, sizeof(ADRS));
-    native_256_copy(&ltree_state.KEY, seed);
-
-    /* Reset the tree height. */
-    ltree_state.M.ADRS.typed.L_tree_Address.tree_height = 0;
-
-    while (len > 1) {
-        for (uint32_t i = 0; i < len / 2; i++) {
-            ltree_state.M.ADRS.typed.L_tree_Address.tree_index = i;
-            rand_hash(HASH_ABSTRACTION(hash_functions) &pk->hashes[i], &ltree_state, &pk->hashes[2 * i],
-                &pk->hashes[2 * i + 1]);
-        }
-        if (len % 2 == 1) {
-            /* Move the leftover node to the first position after the end of the first half of the array. */
-            native_256_copy(&(pk->hashes[len / 2]), &(pk->hashes[len - 1]));
-            len = len / 2 + 1;
-        } else {
-            len = len / 2;
-        }
-        ltree_state.M.ADRS.typed.L_tree_Address.tree_height += 1;
-    }
-    native_256_copy(output, &pk->hashes[0]);
-}
-
-XmssError xmss_tree_hash(XmssNativeValue256 *restrict output, const XmssKeyContext *key_context,
+XmssError xmss_tree_hash(XmssNativeValue256 *const output, const XmssKeyContext *const key_context,
     const XmssInternalCache *const cache_to_use, const uint32_t start_index, const uint32_t target_node_height)
 {
     XmssTreeHashStack stack = INIT_XMSS_TREE_HASH_STACK;
@@ -169,7 +95,7 @@ XmssError xmss_tree_hash(XmssNativeValue256 *restrict output, const XmssKeyConte
     }
 
     /* Set the seed in the tree_hash_state. */
-    native_256_copy(&tree_hash_state.KEY, &key_context->private_stateless.seed);
+    tree_hash_state.KEY = key_context->private_stateless.seed;
 
     for (uint32_t i = 0 ; i < (1u << target_node_height) ; i++) {
         /* The current node. This is the data storage for the leaf node at OTS address start_index + i. */
@@ -193,7 +119,7 @@ XmssError xmss_tree_hash(XmssNativeValue256 *restrict output, const XmssKeyConte
                 XMSS_CACHE_ENTRY_OFFSET(cache_to_use->cache_type, cache_to_use->cache_level,
                     key_context->context.parameter_set, adrs->typed.Hash_Tree_Address.tree_height,
                     adrs->typed.Hash_Tree_Address.tree_index)];
-            native_256_copy(&node, cached_digest);
+            node = *cached_digest;
             /* Increase i with the sub-tree width of the cached node, accounting for the end-of-loop increment of 1. */
             i += (1u << adrs->typed.Hash_Tree_Address.tree_height) - 1u;
         } else {
@@ -210,7 +136,7 @@ XmssError xmss_tree_hash(XmssNativeValue256 *restrict output, const XmssKeyConte
             /* Compress the public key using the ltree algorithm. */
             adrs->type = ADRS_type_L_tree_Address;
             adrs->typed.L_tree_Address.L_tree_address = start_index + i;
-            xmss_ltree(HASH_ABSTRACTION(&key_context->context.hash_functions) &node, &pk, adrs,
+            xmss_ltree(HASH_FUNCTIONS_FROM(key_context->context) &node, &pk, adrs,
                     &key_context->private_stateless.seed);
 
             /* Prepare the state struct for rand_hash computation. */
@@ -229,14 +155,14 @@ XmssError xmss_tree_hash(XmssNativeValue256 *restrict output, const XmssKeyConte
              */
             adrs->typed.Hash_Tree_Address.tree_index = (adrs->typed.Hash_Tree_Address.tree_index - 1) / 2;
             stack.count -= 1;
-            rand_hash(HASH_ABSTRACTION(&key_context->context.hash_functions) &node, &tree_hash_state,
-                    &stack.items[stack.count].digest, &node);
+            rand_hash(HASH_FUNCTIONS_FROM(key_context->context) &node, &tree_hash_state,
+                &stack.items[stack.count].digest, &node);
             adrs->typed.Hash_Tree_Address.tree_height += 1;
         }
 
         /* Push the node to the stack. */
         assert(stack.count < XMSS_MAX_TREE_DEPTH - 1);
-        native_256_copy(&stack.items[stack.count].digest, &node);
+        stack.items[stack.count].digest = node;
         stack.items[stack.count].tree_height = adrs->typed.Hash_Tree_Address.tree_height;
         stack.count += 1;
     }
@@ -245,12 +171,12 @@ XmssError xmss_tree_hash(XmssNativeValue256 *restrict output, const XmssKeyConte
     assert(stack.items[0].tree_height == target_node_height);
 
     /* Return the node on the stack. */
-    native_256_copy(output, &stack.items[0].digest);
+    *output = stack.items[0].digest;
     return XMSS_OKAY;
 }
 
-XmssError xmss_fill_top_cache(XmssInternalCache *cache, const XmssKeyContext *const restrict key_context,
-    uint32_t subtree_root_height, uint32_t subtree_root_index, uint32_t pre_cached_height)
+XmssError xmss_fill_top_cache(XmssInternalCache *const cache, const XmssKeyContext *const key_context,
+    const uint32_t subtree_root_height, const uint32_t subtree_root_index, const uint32_t pre_cached_height)
 {
     /* The tree_hash_state input can largely be reused between the different tree_hash operations.
      * This structure contains both the SEED and the ADRS.
@@ -272,7 +198,7 @@ XmssError xmss_fill_top_cache(XmssInternalCache *cache, const XmssKeyContext *co
     }
 
     /* Set the seed in the tree_hash_state. */
-    native_256_copy(&tree_hash_state.KEY, &key_context->private_stateless.seed);
+    tree_hash_state.KEY = key_context->private_stateless.seed;
     /* Fill the sub-tree. */
     for (uint32_t height = pre_cached_height; height < subtree_root_height; height++) {
         /* Tree height setting for RAND_HASH is tree height of the input nodes. */
@@ -286,8 +212,7 @@ XmssError xmss_fill_top_cache(XmssInternalCache *cache, const XmssKeyContext *co
             XmssNativeValue256 *out = &cache->cache[XMSS_CACHE_ENTRY_OFFSET(cache->cache_type, cache->cache_level,
                 key_context->context.parameter_set, height + 1, index >> 1)];
             adrs->typed.Hash_Tree_Address.tree_index = index >> 1;
-            rand_hash(HASH_ABSTRACTION(&key_context->context.hash_functions)
-                out, &tree_hash_state, left, right);
+            rand_hash(HASH_FUNCTIONS_FROM(key_context->context) out, &tree_hash_state, left, right);
         }
     }
     return XMSS_OKAY;

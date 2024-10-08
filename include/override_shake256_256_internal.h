@@ -56,16 +56,20 @@
  * Absorbs additional bytes into the state array **A**.
  *
  * @details
- * offset + byte_count does not extend beyond the block size of 136 bytes for SHAKE256/256.
- * This function XORs the additional bytes into the internal layout of the state array.
+ * `offset` + `byte_count` does not extend beyond the block size of 136 bytes for SHAKE256/256.
+ * This function XORs the additional bytes into the internal layout of the state array `A`.
+ *
+ * This function is never called with empty data; i.e. `byte_count` >= 1.
+ *
+ * For performance reasons, it is recommended not to validate the input. This function is guaranteed to be called by the
+ * library with valid input.
  *
  * @param[in,out] A            The state array.
  * @param[in]     offset       The offset into the 136-byte block where to start absorbing the bytes.
- * @param[in]     bytes        Input bytes; may be NULL if and only if byte_count is 0.
+ * @param[in]     bytes        Input bytes.
  * @param[in]     byte_count   Length in bytes of the input.
  */
-void sponge_absorb(uint64_t *restrict A, uint_fast16_t offset, const uint8_t *restrict bytes,
-    uint_fast16_t byte_count);
+void xmss_sponge_absorb(uint64_t *A, uint_fast8_t offset, const uint8_t *bytes, uint_fast8_t byte_count);
 
 /**
  * @brief
@@ -73,32 +77,45 @@ void sponge_absorb(uint64_t *restrict A, uint_fast16_t offset, const uint8_t *re
  *
  * @details
  * Absorption starts at the beginning of the 136 bytes block for SHAKE256/256.
- * word_count does not extend beyond the block size of 136 bytes for SHAKE256/256; i.e., word_count <= 34.
- * This function XORs the words into the internal layout of the state array.
+ * `word_count` does not extend beyond the block size of 136 bytes for SHAKE256/256; i.e., `word_count` <= 34.
+ * This function XORs the words into the internal layout of the state array `A`.
+ *
+ * This function is never called with empty data; i.e. `word_count` >= 1.
+ *
+ * For performance reasons, it is recommended not to validate the input. This function is guaranteed to be called by the
+ * library with valid input.
  *
  * @param[in,out] A            The state array.
- * @param[in]     words        Input words; may be NULL if and only if byte_count is 0.
+ * @param[in]     words        Input words.
  * @param[in]     word_count   Length in 32-bit words of the input.
  */
-void sponge_absorb_native(uint64_t *restrict A, const uint32_t *restrict words, uint_fast16_t word_count);
+void xmss_sponge_absorb_native(uint64_t *A, const uint32_t *words, uint_fast8_t word_count);
 
 /**
  * @brief
  * Extracts the digest from the state array **A**.
+ *
+ * @details
+ * For performance reasons, it is recommended not to validate the input. This function is guaranteed to be called by the
+ * library with valid input.
  *
  * @param[out] digest   The output digest.
  * @param[in]  A        The final state array.
  */
-void sponge_squeeze(XmssValue256 *restrict digest, const uint64_t *restrict const A);
+void xmss_sponge_squeeze(XmssValue256 *digest, const uint64_t *A);
 
 /**
  * @brief
  * Extracts the digest from the state array **A**.
  *
+ * @details
+ * For performance reasons, it is recommended not to validate the input. This function is guaranteed to be called by the
+ * library with valid input.
+ *
  * @param[out] native_digest   The output digest.
  * @param[in]  A               The final state array.
  */
-void sponge_squeeze_native(XmssNativeValue256 *restrict native_digest, const uint64_t *restrict const A);
+void xmss_sponge_squeeze_native(XmssNativeValue256 *native_digest, const uint64_t *A);
 
 /**
  * @brief
@@ -112,8 +129,11 @@ void sponge_squeeze_native(XmssNativeValue256 *restrict native_digest, const uin
  *
  * Note that instead of returning the result, this function transforms the input state array in-place.
  *
+ * For performance reasons, it is recommended not to validate the input. This function is guaranteed to be called by the
+ * library with valid input.
+ *
  * @param[in,out] A   The state array.
 */
-void keccak_p_1600_24(uint64_t *A);
+void xmss_keccak_p_1600_24(uint64_t *A);
 
 #endif /* !XMSS_OVERRIDE_SHAKE256_256_INTERNAL_H_INCLUDED */

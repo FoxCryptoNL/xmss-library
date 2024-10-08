@@ -13,7 +13,7 @@
 
 #include "override_shake256_256_generic.h"
 
-void *shake256_256_init(void)
+void *xmss_shake256_256_init(void)
 {
     static unsigned int xoflen = 32;
     static const OSSL_PARAM params[2] = {
@@ -25,21 +25,21 @@ void *shake256_256_init(void)
         },
         { 0 }
     };
-    EVP_MD_CTX *restrict ctx = EVP_MD_CTX_new();
+    EVP_MD_CTX *const ctx = EVP_MD_CTX_new();
     EVP_DigestInit_ex(ctx, EVP_shake256(), NULL);
     EVP_MD_CTX_set_params(ctx, params);
     return ctx;
 }
 
-void shake256_256_update(void *context, const uint8_t *restrict data, size_t data_length)
+void xmss_shake256_256_update(void *context, const uint8_t *const data, const size_t data_length)
 {
-    EVP_MD_CTX *restrict ctx = (EVP_MD_CTX *restrict)context;
+    EVP_MD_CTX *const ctx = (EVP_MD_CTX *)context;
     EVP_DigestUpdate(ctx, data, data_length);
 }
 
-void shake256_256_finalize(void *context, XmssValue256 *restrict digest)
+void xmss_shake256_256_finalize(void *const context, XmssValue256 *const digest)
 {
-    EVP_MD_CTX *restrict ctx = (EVP_MD_CTX *restrict)context;
+    EVP_MD_CTX *const ctx = (EVP_MD_CTX *)context;
     EVP_DigestFinal(ctx, digest->data, NULL);
     EVP_MD_CTX_free(ctx);
 }

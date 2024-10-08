@@ -54,7 +54,7 @@ bool decode_hex(uint8_t *dst, size_t dst_size, const char *src)
     src += 3;
     char buffer[3] = { 0 };
     for (; dst_size > 0; src += 2, ++dst, --dst_size) {
-        if (!isxdigit(src[0]) || !isxdigit(src[1])) {
+        if (!isxdigit((int)src[0]) || !isxdigit((int)src[1])) {
             return false;
         }
         buffer[0] = src[0];

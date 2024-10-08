@@ -5,17 +5,26 @@
  * SPDX-FileContributor: Frans van Dorsselaer
  */
 
+#include "libxmss.c"
+
+#if XMSS_ENABLE_SIGNING
+#   define reference_digest shake256_256_digest
+#else
+#   define REFERENCE_DIGEST_SHAKE256_256
+#   include "reference-digest.inc"
+#endif
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "nist-test-vectors.h"
-#include "shake256_256_xmss_hashes.h"
+
 
 void on_test_vector(XmssValue256 *digest, const uint8_t *message, size_t message_length)
 {
-    shake256_256_digest(digest, message, message_length);
+    reference_digest(digest, message, message_length);
 }
 
 int main(void)

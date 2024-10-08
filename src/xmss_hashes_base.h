@@ -22,11 +22,15 @@
 
 #include "config.h"
 
+#include "structures.h"
 #include "types.h"
 #include "utils.h"
 
 /** @brief Block size of SHA-256 in bytes. */
 #define SHA256_BLOCK_SIZE 64
+
+/** @brief Size of the Keccak state array (for SHAKE256_256 calculations). */
+#define KECCAK_STATE_ARRAY_SIZE 200
 
 /** @brief  Value for the ADRS.type member to indicate the union member typed.OTS_Hash_Address is used. */
 #define ADRS_type_OTS_Hash_Address (0u)
@@ -42,7 +46,7 @@
  * The ADRS structure as defined by RFC 8391, Section 2.5. This structure acts as a unique salt for each of the
  * XMSS hash functions and improves the collision resistance of the underlying hash algorithm.
  */
-typedef struct {
+typedef struct ADRS {
     /** @brief As this implementation does not support Multi-Tree XMSS, this value is always 0. */
     uint32_t layer_address;
     /**
@@ -127,7 +131,7 @@ typedef struct {
  * @brief
  * Struct holding the index of the signature for generating the per-message randomness. Equals toByte(idx_sig,32).
  */
-typedef struct {
+typedef struct IdxSigBlock {
     /** @brief Zeros. */
     uint32_t zero[7];
     /** @brief The index of the signature. */
@@ -135,7 +139,7 @@ typedef struct {
 } IdxSigBlock;
 
 /** @private */
-STATIC_ASSERT(sizeof(ADRS) == sizeof(IdxSigBlock), "ADRS and IdxSigBlock should have equal size.");
+XMSS_STATIC_ASSERT(sizeof(ADRS) == sizeof(IdxSigBlock), "ADRS and IdxSigBlock should have equal size.");
 
 /**
  * @brief
@@ -178,11 +182,11 @@ STATIC_ASSERT(sizeof(ADRS) == sizeof(IdxSigBlock), "ADRS and IdxSigBlock should 
  *
  * XmssNativeValue256 *source_key;
  * uint8_t *source_message;
- * native_256_copy(&input.KEY, source_key);
+ * input.KEY = *source_key;
  * big_endian_to_native(input.M, source_message, 8);
  * ```
  */
-typedef struct {
+typedef struct Input_F {
     /** @brief Initialize to toByte(0). */
     const XmssNativeValue256 prefix_0;
 
@@ -243,11 +247,11 @@ typedef struct {
  *
  * XmssNativeValue256 *source_key;
  * uint8_t *source_message;
- * native_256_copy(&input.KEY, source_key);
+ * input.KEY = *source_key;
  * big_endian_to_native(input.M[0].data, source_message, 16);
  * ```
  */
-typedef struct {
+typedef struct Input_H {
     /** @brief Initialize to toByte(1). */
     XmssNativeValue256 prefix_1;
 
@@ -317,12 +321,12 @@ typedef struct {
  * XmssNativeValue256 *source_r;
  * XmssValue256 *source_root;
  * uint32_t source_idx_sig;
- * native_256_copy(input.r, source_r);
+ * input.r = *source_r;
  * big_endian_to_native_256(&input.Root, source_root);
  * input.idx_sig = source_idx_sig;
  * ```
  */
-typedef struct {
+typedef struct Input_H_msg {
     /** @brief Initialize to toByte(2). */
     const XmssNativeValue256 prefix_2;
 
@@ -373,11 +377,11 @@ typedef struct {
  *
  * XmssNativeValue256 *source_key;
  * ADRS *source_adrs;
- * native_256_copy(&input.KEY, source_key);
+ * input.KEY = *source_key;
  * big_endian_to_native(input.M.ADRS, source_adrs, sizeof(ADRS));
  * ```
  */
-typedef struct {
+typedef struct Input_PRF {
     /** @brief Initialize to toByte(3). */
     const XmssNativeValue256 prefix_3;
     /** @brief The first parameter to the XMSS PRF(KEY,M) hash function. */
@@ -440,10 +444,10 @@ typedef struct {
  * ADRS *source_adrs;
  * big_endian_to_native_256(&input.S_XMSS, source_s_xmss);
  * big_endian_to_native_256(&input.SEED, source_seed);
- * memcpy(input.ADRS, source_adrs, sizeof(ADRS));
+ * input.ADRS = *source_adrs;
  * ```
  */
-typedef struct {
+typedef struct Input_PRFkeygen {
     /** @brief Initialize to toByte(4). */
     const XmssNativeValue256 prefix_4;
     /** @brief The secret key generation seed. */
@@ -507,7 +511,7 @@ typedef struct {
  * input.drbg_counter = source_drbg_counter;
  * ```
  */
-typedef struct {
+typedef struct Input_PRFindex {
     /** @brief Initialize to toByte(5). */
     const XmssNativeValue256 prefix_5;
     /** @brief The secret index permutation seed. */
@@ -553,28 +557,59 @@ typedef struct {
         INIT_PADDING_SHA256(TO_BITS(INPUT_PRF_INDEX_DATA_SIZE)) \
     }
 
+#if XMSS_ENABLE_SHA256
+/** @brief Context when we calculate SHA256 hashes with streaming data. */
+typedef struct XmssHMsgSha256Ctx {
+    /** @brief Intermediate hash value. */
+    XmssNativeValue256 intermediate_hash;
+    /** @brief Partial block, for when the length of the input is not a multiple of the block size, stored in big-endian. */
+    uint8_t partial_block[SHA256_BLOCK_SIZE];
+    /** @brief Bytes in the partial block. */
+    union {
+        size_t value;
+        uint64_t alignment;
+    } bytes_in_partial_block;
+    /** @brief Bytes that have been hashed, not counting bytes stored in partial_block. */
+    uint64_t bytes_hashed;
+    /** @brief padding to match the size of XmssHMsgShake256_256Ctx . */
+    uint8_t _padding[200 + 8 - 32 - 64 - 8 - 8];
+} XmssHMsgSha256Ctx;
+#endif
+
+#if XMSS_ENABLE_SHAKE256_256
+/** @brief Context when we calculate SHAKE256_256 hashes with streaming data. */
+typedef struct XmssHMsgShake256_256Ctx {
+    /** @brief Keccak state array for calculating the SHAKE256_256 hash. */
+    uint64_t shake256_256_state_array[KECCAK_STATE_ARRAY_SIZE / sizeof(uint64_t)];
+    /** @brief Offset for the next absorb; always < 136, the block size of SHAKE256_256. */
+    union {
+        uint_fast8_t value;
+        uint64_t alignment;
+    } offset;
+} XmssHMsgShake256_256Ctx;
+#endif
+
+#if XMSS_ENABLE_SHA256 && XMSS_ENABLE_SHAKE256_256
+/** @private */
+XMSS_STATIC_ASSERT(sizeof(XmssHMsgSha256Ctx) == sizeof(XmssHMsgShake256_256Ctx),
+    "XmssHMsgSha256Ctx and XmssHMsgShake256_256Ctx have different sizes.");
+#endif
+
+/** @brief Context for calculating H_msg hashes from streaming data. */
+typedef union XmssHMsgCtx {
+#if XMSS_ENABLE_SHA256
+    /** @brief Context when we use SHA256. */
+    XmssHMsgSha256Ctx sha256_ctx;
+#endif
+#if XMSS_ENABLE_SHAKE256_256
+    /** @brief Context when we use SHAKE256_256. */
+    XmssHMsgShake256_256Ctx shake256_256_ctx;
+#endif
+    /** @brief Context pointer for hash implementations with the generic interface. */
+    void *generic_ctx;
+} XmssHMsgCtx;
+
 #if XMSS_ENABLE_HASH_ABSTRACTION
-
-/**
- * @brief
- * Generate a digest of a message.
- *
- * @param[out] digest   The output digest.
- * @param[in] message   Input message; may be NULL if and only if message_length is 0.
- * @param[in] message_length   Input message length in bytes.
- */
-typedef void (*prototype_digest)(XmssValue256 *restrict digest, const uint8_t *restrict message, size_t message_length);
-
-/**
- * @brief
- * Generate a digest of an array of 32-bit native words.
- *
- * @param[out] native_digest   The output digest.
- * @param[in] words            Input data; may be NULL if and only if data_count is 0.
- * @param[in] word_count       The number of data words.
- */
-typedef void (*prototype_native_digest)(XmssNativeValue256 *restrict native_digest, const uint32_t *restrict words,
-    size_t word_count);
 
 /**
  * @brief
@@ -586,7 +621,7 @@ typedef void (*prototype_native_digest)(XmssNativeValue256 *restrict native_dige
  * @param[out] native_digest   The output of the XMSS F(KEY,M) hash function in native form.
  * @param[in] input   The input parameters to the XMSS F(KEY,M) hash function as a single, optimized structure.
  */
-typedef void (*prototype_F)(XmssNativeValue256 *restrict native_digest, const Input_F *restrict input);
+typedef void (*prototype_F)(XmssNativeValue256 *native_digest, const Input_F *input);
 
 /**
  * @brief
@@ -598,24 +633,47 @@ typedef void (*prototype_F)(XmssNativeValue256 *restrict native_digest, const In
  * @param[out] native_digest   The output of the XMSS H(KEY,M) hash function in native form.
  * @param[in] input   The input parameters to the XMSS H(KEY,M) hash function as a single, optimized structure.
  */
-typedef void (*prototype_H)(XmssNativeValue256 *restrict native_digest, const Input_H *restrict input);
+typedef void (*prototype_H)(XmssNativeValue256 *native_digest, const Input_H *input);
 
 /**
  * @brief
- * Execute the XMSS H_msg(KEY,M) hash function.
+ * Initialize the context for calculating the XMSS H_msg(KEY,M) hash function.
  *
  * @details
  * KEY = r || Root || toByte(idx_sig, 32).
  *
  * The KEY parameters are provided in a single structure for performance reasons.
  *
- * @param[out] native_digest   The output of the XMSS H_msg(KEY,M) hash function in native form.
+ * @param[out] ctx  Context holding the intermediate state of the hash calculation.
  * @param[in] input     Input to the XMSS H_msg() hash function, excluding the message.
- * @param[in] message   Input message; may be NULL if and only if message_length is 0.
- * @param[in] message_length   Length of message in bytes.
  */
-typedef void (*prototype_H_msg)(XmssNativeValue256 *restrict native_digest, const Input_H_msg *restrict input,
-    const uint8_t *restrict message, size_t message_length);
+typedef void (*prototype_H_msg_init)(XmssHMsgCtx *ctx, const Input_H_msg *input);
+
+/**
+ * @brief
+ * Update the calculation of the XMSS H_msg(KEY,M) hash function with the next part of M.
+ *
+ * @details
+ * When fault injection tolerance is required, provide a non-NULL `part_verify` parameter. After this function
+ * completes successfully, compare the value returned in `*part_verify` with the original message `part` pointer.
+ *
+ * @param[in,out]   ctx         Context holding the intermediate state of the hash calculation.
+ * @param[in]       part        Next part of the message; may be NULL if and only if part_length is 0.
+ * @param[in]       part_length Length of part in bytes.
+ * @param[out]      part_verify (optional, may be NULL) Outputs a copy of `part` to verify the correct message was
+ *                              processed. This can be used to mitigate fault injections.
+ */
+typedef void (*prototype_H_msg_update)(XmssHMsgCtx *ctx, const uint8_t *part, size_t part_length,
+    const uint8_t *volatile *part_verify);
+
+/**
+ * @brief
+ * Finalize the calculation of the XMSS H_msg(KEY,M) hash function and output the digest.
+ *
+ * @param[out] native_digest    The output of the XMSS H_msg(KEY,M) hash function in native form.
+ * @param[in] ctx   Context holding the intermediate state of the hash calculation.
+ */
+typedef void (*prototype_H_msg_finalize)(XmssNativeValue256 *native_digest, XmssHMsgCtx *ctx);
 
 /**
  * @brief
@@ -629,7 +687,9 @@ typedef void (*prototype_H_msg)(XmssNativeValue256 *restrict native_digest, cons
  * @param[out] native_digest   The output of the XMSS PRF(KEY,M) hash function in native form.
  * @param[in] input   The input parameters to the XMSS PRF(KEY,M) hash function as a single, optimized structure.
  */
-typedef void (*prototype_PRF)(XmssNativeValue256 *restrict native_digest, const Input_PRF *restrict input);
+typedef void (*prototype_PRF)(XmssNativeValue256 *native_digest, const Input_PRF *input);
+
+#if XMSS_ENABLE_SIGNING
 
 /**
  * @brief
@@ -643,7 +703,7 @@ typedef void (*prototype_PRF)(XmssNativeValue256 *restrict native_digest, const 
  * @param[out] native_digest   The output of the XMSS PRFkeygen(KEY,M) hash function in native form.
  * @param[in] input   The input parameters to the XMSS PRFkeygen(KEY,M) hash function as a single, optimized structure.
  */
-typedef void (*prototype_PRFkeygen)(XmssNativeValue256 *restrict native_digest, const Input_PRFkeygen *restrict input);
+typedef void (*prototype_PRFkeygen)(XmssNativeValue256 *native_digest, const Input_PRFkeygen *input);
 
 /**
  * @brief
@@ -663,7 +723,29 @@ typedef void (*prototype_PRFkeygen)(XmssNativeValue256 *restrict native_digest, 
  * @param[in] input   The input parameters to the index obfuscation PRFindex(KEY,M) hash function as a single,
  *                    optimized structure.
  */
-typedef void (*prototype_PRFindex)(XmssNativeValue256 *restrict native_digest, const Input_PRFindex *restrict input);
+typedef void (*prototype_PRFindex)(XmssNativeValue256 *native_digest, const Input_PRFindex *input);
+
+/**
+ * @brief
+ * Generate a digest of a message.
+ *
+ * @param[out] digest   The output digest.
+ * @param[in] message   Input message; may be NULL if and only if message_length is 0.
+ * @param[in] message_length   Input message length in bytes.
+ */
+typedef void (*prototype_digest)(XmssValue256 *digest, const uint8_t *message, size_t message_length);
+
+/**
+ * @brief
+ * Generate a digest of an array of 32-bit native words.
+ *
+ * @param[out] native_digest   The output digest.
+ * @param[in] words            Input data; may be NULL if and only if data_count is 0.
+ * @param[in] word_count       The number of data words.
+ */
+typedef void (*prototype_native_digest)(XmssNativeValue256 *native_digest, const uint32_t *words, size_t word_count);
+
+#endif /* XMSS_ENABLE_SIGNING */
 
 /**
  * @brief
@@ -684,30 +766,40 @@ typedef void (*prototype_PRFindex)(XmssNativeValue256 *restrict native_digest, c
  * } key_context;
  * ```
  */
-typedef struct {
-    /** @brief The standardized, generic, byte-oriented digest function. */
-    prototype_digest digest;
-
-    /** @brief The internal native 32-bit word-oriented digest function. */
-    prototype_native_digest native_digest;
-
+typedef struct xmss_hashes {
     /** @brief The XMSS F() hash function. */
     prototype_F F;
 
     /** @brief The XMSS H() hash function. */
     prototype_H H;
 
-    /** @brief The XMSS H_msg() hash function. */
-    prototype_H_msg H_msg;
+    /** @brief The XMSS H_msg_init() function. */
+    prototype_H_msg_init H_msg_init;
+
+    /** @brief The XMSS H_msg_update() function. */
+    prototype_H_msg_update H_msg_update;
+
+    /** @brief The XMSS H_msg_finalize() function. */
+    prototype_H_msg_finalize H_msg_finalize;
 
     /** @brief The XMSS PRF() hash function. */
     prototype_PRF PRF;
+
+#if XMSS_ENABLE_SIGNING
 
     /** @brief The XMSS PRFkeygen() hash function. */
     prototype_PRFkeygen PRFkeygen;
 
     /** @brief The index obfuscation PRFindex() hash function. */
     prototype_PRFindex PRFindex;
+
+    /** @brief The standardized, generic, byte-oriented digest function. */
+    prototype_digest digest;
+
+    /** @brief The internal native 32-bit word-oriented digest function. */
+    prototype_native_digest native_digest;
+
+#endif /* XMSS_ENABLE_SIGNING */
 } xmss_hashes;
 
 #endif /* XMSS_ENABLE_HASH_ABSTRACTION */

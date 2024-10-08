@@ -8,21 +8,14 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+#include "config.h"
 #include "signing.h"
-
-#include "types.h"
-#include "structures.h"
-#include <private.h>
-#include <stdio.h>
-
-#include "utils.h"
-
 
 int main(void)
 {
     bool success = true;
 
-    static XmssSigningContext *context_ptr_dynamic = NULL;
+    XmssSigningContext *context_ptr_dynamic = NULL;
 
 #if XMSS_ENABLE_SHA256
     const uint32_t any_supported_param_set = XMSS_PARAM_SHA2_10_256;

@@ -30,7 +30,7 @@
  * @details
  * The signing context defines the parameter set and the hash functions to use.
  *
- * When creating an XmssSigningContext, the XMSS_SIGNING_CONTEXT_SIZE macro can be used to allocate the correct size.
+ * When creating an XmssSigningContext, the #XMSS_SIGNING_CONTEXT_SIZE macro can be used to allocate the correct size.
  *
  * XmssSigningContext is an opaque type, do not access its members.
  */
@@ -40,7 +40,7 @@ typedef struct XmssSigningContext XmssSigningContext;
  * @brief
  * The size in bytes of an XmssSigningContext.
  */
-#define XMSS_SIGNING_CONTEXT_SIZE (4u + 4u + 4u + 4u + 11u * sizeof(void(*)()))
+#define XMSS_SIGNING_CONTEXT_SIZE (4u + 4u + 4u + 4u + 4u * sizeof(void(*)(void)))
 
 /**
  * @brief
@@ -60,7 +60,7 @@ void xmss_free_signing_context(XmssSigningContext *signing_context);
  * In-memory representation of a loaded cache.
  *
  * @details
- * When creating an XmssInternalCache, the XMSS_INTERNAL_CACHE_SIZE macro can be used to allocate the correct size.
+ * When creating an XmssInternalCache, the #XMSS_INTERNAL_CACHE_SIZE() macro can be used to allocate the correct size.
  *
  * XmssInternalCache is an opaque type, do not access its members.
  */
@@ -70,12 +70,12 @@ typedef struct XmssInternalCache XmssInternalCache;
  * @brief
  * The number of cached entries for a specific cache configuration.
  *
- * @note The arguments to XMSS_CACHE_ENTRY_COUNT will be evaluated multiple times.
+ * @note The arguments to #XMSS_CACHE_ENTRY_COUNT() will be evaluated multiple times.
  *
  * @param[in] cache_type    The cache type that is used.
  * @param[in] cache_level   The cache level that is to be held.
  * @param[in] param_set     The parameter set of the key for which the cache will be used.
- * @see xmss_generate_public_key for more information about the cache type and level.
+ * @see xmss_generate_public_key() for more information about the cache type and level.
  */
 #define XMSS_CACHE_ENTRY_COUNT(cache_type, cache_level, param_set) \
     ((cache_type) == XMSS_CACHE_NONE ? 0u : \
@@ -92,12 +92,12 @@ typedef struct XmssInternalCache XmssInternalCache;
  * @brief
  * The size in bytes of an XmssInternalCache.
  *
- * @note The arguments to XMSS_INTERNAL_CACHE_SIZE will be evaluated multiple times.
+ * @note The arguments to #XMSS_INTERNAL_CACHE_SIZE() will be evaluated multiple times.
  *
  * @param[in] cache_type    The cache type that is used.
  * @param[in] cache_level   The cache level that is to be held.
  * @param[in] param_set     The parameter set of the key for which the cache will be used.
- * @see xmss_generate_public_key for more information about the cache type and level.
+ * @see xmss_generate_public_key() for more information about the cache type and level.
  */
 #define XMSS_INTERNAL_CACHE_SIZE(cache_type, cache_level, param_set) \
     (4 + 4 + sizeof(XmssValue256) * XMSS_CACHE_ENTRY_COUNT((cache_type), (cache_level), (param_set)))
@@ -116,7 +116,7 @@ typedef struct XmssInternalCache XmssInternalCache;
  * Context for using the signature generation part of the library, with a loaded private key partition.
  *
  * @details
- * When creating an XmssKeyContext, the XMSS_KEY_CONTEXT_SIZE macro can be used to allocate the correct size.
+ * When creating an XmssKeyContext, the #XMSS_KEY_CONTEXT_SIZE macro can be used to allocate the correct size.
  *
  * XmssKeyContext is an opaque type, do not access its members.
  */
@@ -144,10 +144,10 @@ typedef struct XmssKeyContext XmssKeyContext;
  * @brief
  * The size in bytes of an XmssKeyContext.
  *
- * @note The param_set argument will be evaluated multiple times.
+ * @note The `param_set` argument will be evaluated multiple times.
  *
- * @param[in] param_set             The XmssParameterSetOID that is to be used for the private key.
- * @param[in] obfuscation_setting   The XmssIndexObfuscationSetting that is to be used with the private key.
+ * @param[in] param_set             The #XmssParameterSetOID that is to be used for the private key.
+ * @param[in] obfuscation_setting   The #XmssIndexObfuscationSetting that is to be used with the private key.
  */
 #define XMSS_KEY_CONTEXT_SIZE(param_set, obfuscation_setting) \
     (4u + 4u + XMSS_SIGNING_CONTEXT_SIZE + XMSS_PRIVATE_KEY_STATELESS_PART_SIZE + \
@@ -170,7 +170,7 @@ void xmss_free_key_context(XmssKeyContext *key_context);
  * The temporary context to gather all the results of generating a public key.
  *
  * @details
- * When creating an XmssKeyGenerationContext, the XMSS_KEY_GENERATION_CONTEXT_SIZE macro may be used to allocate the
+ * When creating an XmssKeyGenerationContext, the #XMSS_KEY_GENERATION_CONTEXT_SIZE macro may be used to allocate the
  * correct size.
  *
  * The elements of an XmssKeyGenerationContext are generally to be considered invalid outside of their specific use in
@@ -185,7 +185,7 @@ typedef struct XmssKeyGenerationContext XmssKeyGenerationContext;
  * The size in bytes of XmssKeyGenerationContext.
  *
  * @param[in] generation_partitions The number of calculation partitions that will divide the work.
- * @see xmss_generate_public_key for more information about generation_partitions
+ * @see xmss_generate_public_key() for more information about generation_partitions.
  */
 #define XMSS_KEY_GENERATION_CONTEXT_SIZE(generation_partitions) \
     (sizeof(void*) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(void*) + sizeof(void*) + \

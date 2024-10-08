@@ -1,8 +1,9 @@
 /*
- * SPDX-FileCopyrightText: 2023 Fox Crypto B.V.
+ * SPDX-FileCopyrightText: 2024 Fox Crypto B.V.
  * SPDX-License-Identifier: MIT
  *
  * SPDX-FileContributor: Max Fillinger
+ * SPDX-FileContributor: Frans van Dorsselaer
  */
 
 /**
@@ -11,52 +12,47 @@
  * Utility and convenience functions.
  */
 
-#include <stdint.h>
-#include <string.h>
-
-#include "config.h"
-
 #include "utils.h"
 
-/**
- * @brief
- * Volatile pointer to the standard C library memset() function.
- */
-static void * (* volatile const memset_p)(void *, int, size_t) = memset;
-
-#if XMSS_CAN_USE_PRAGMA_OPTIMIZE
-#pragma optimize("", off)
-#endif
-
-#if XMSS_CAN_USE_PRAGMA_GCC_OPTIMIZE
-#pragma GCC optimize("O0")
-#endif
-
-#if XMSS_CAN_USE_PRAGMA_CLANG_OPTIMIZE
-#pragma clang optimize off
-#endif
-void xmss_zeroize(void * const ptr, const size_t size)
+ValueCompareResult compare_32_bytes(const uint8_t *const array1, const uint8_t *const array2)
 {
-    /*
-     * We need to ensure that the memset call in this function cannot be optimized away. For GCC and Clang, we use
-     * pragmas to disable optimization for this function, because these compilers are our primary target and this
-     * approach can not be defeated by future improvements to their optimization techniques.
-     *
-     * To have a solution that works on almost all compilers, we access memset through a volatile pointer memset_p.
-     * Because it is volatile, the compiler is not allowed to assume that it still points to memset.
-     *
-     * It is still technically allowed to optimize the function call below to
-     *
-     *     if (memset_p != memset) {
-     *         memset_p(ptr, 0, size);
-     *     }
-     *
-     * so the standard does not guarantee that this works.
-     *
-     * See also:
-     * https://www.daemonology.net/blog/2014-09-04-how-to-zero-a-buffer.html
-     * https://www.daemonology.net/blog/2014-09-05-erratum.html
-     * https://www.daemonology.net/blog/2014-09-06-zeroing-buffers-is-insufficient.html
-     */
-    memset_p(ptr, 0, size);
+    /* Double volatile: we want the original pointer to be used for every indirection, and prevent caching of the
+     * pointed-to values. */
+    volatile const uint8_t *volatile const p1 = array1;
+    volatile const uint8_t *volatile const p2 = array2;
+    volatile uint_fast8_t difference = 0;
+
+    if ((p1 == NULL) || (p2 == NULL) || (p1 == p2))
+    {
+        /* If the addresses differ by a power of two, then a single bit error in the pointer value could result in them
+         * pointing to the same memory (which in turn would lead to a false positive).
+         * Such a bit error is handled by this function as if the memory does not compare equal.
+         */
+        return VALUES_ARE_NOT_EQUAL;
+    }
+
+    for (size_t i = 0; i < 32; i++) {
+        difference |= (uint_fast8_t)(p1[i] ^ p2[i]);
+    }
+    if (difference) {
+        return VALUES_ARE_NOT_EQUAL;
+    }
+
+    /* Repeat the check so that a single bit error cannot cause us to wrongly output VALUES_ARE_EQUAL.
+     * Because every loop iteration reads volatile data and updates a volatile variable, the compiler is not allowed
+     * to optimize away this second loop. */
+    for (size_t i = 0; i < 32; i++) {
+        difference |= (uint_fast8_t)(p1[i] ^ p2[i]);
+    }
+    if (difference) {
+        return VALUES_ARE_NOT_EQUAL;
+    }
+
+    /* Repeat the check to ensure p1, p2, and size did not alter since the first time we checked. */
+    if ((p1 == NULL) || (p2 == NULL) || (p1 == p2))
+    {
+        return VALUES_ARE_NOT_EQUAL;
+    }
+
+    return VALUES_ARE_EQUAL;
 }

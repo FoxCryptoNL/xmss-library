@@ -27,10 +27,12 @@
  * @details
  * Atomics did not exist before C11; even in C11 support is optional.
  * When supported, _Atomic is a keyword and no header inclusion is required. However, within the library source code,
- * we require that compat_stdatomic.h is included, so this compatibility macro is defined as a no-op in case
- * C11 _Atomic is not supported.
+ * we require that compat_stdatomic.h is included. Note that we cannot simply define _Atomic itself, as the namespace
+ * (underscore) is reserved. Besides, some implementations (e.g., newlib) already define _Atomic in a non-standard way.
  */
-#   define _Atomic
+#   define ATOMIC
+#else
+#   define ATOMIC _Atomic
 #endif
 
 #if ((__STDC_VERSION__ < 201112L) || defined(__STDC_NO_ATOMICS__)) && !defined(DOXYGEN)

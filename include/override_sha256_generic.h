@@ -37,7 +37,7 @@
  * @details
  * This is the specialization for the SHA-256 algorithm.
  */
-void *sha256_init(void);
+void *xmss_sha256_init(void);
 
 /**
  * @copydoc XmssGenericDigestUpdate
@@ -45,7 +45,7 @@ void *sha256_init(void);
  * @details
  * This is the specialization for the SHA-256 algorithm.
  */
-void sha256_update(void *restrict context, const uint8_t *restrict data, size_t data_length);
+void xmss_sha256_update(void *context, const uint8_t *data, size_t data_length);
 
 /**
  * @copydoc XmssGenericDigestFinalize
@@ -53,6 +53,6 @@ void sha256_update(void *restrict context, const uint8_t *restrict data, size_t 
  * @details
  * This is the specialization for the SHA-256 algorithm.
  */
-void sha256_finalize(void *restrict context, XmssValue256 *restrict digest);
+void xmss_sha256_finalize(void *context, XmssValue256 *digest);
 
 #endif /* !XMSS_OVERRIDE_SHA256_GENERIC_H_INCLUDED */

@@ -37,6 +37,18 @@
 
 /**
  * @brief
+ * Indicates whether the SHA-256 default implementation is enabled.
+ *
+ * @details
+ * This macro is defined with the value 0 if you compile the library with
+ * ```
+ * cmake -DXMSS_SHA256={Disabled | OverrideInternal | OverrideGeneric}
+ * ```
+ */
+#cmakedefine01 XMSS_ENABLE_SHA256_DEFAULT
+
+/**
+ * @brief
  * Indicates whether SHA-256 uses the generic interface.
  *
  * @details
@@ -59,6 +71,18 @@
  * ```
  */
 #cmakedefine01 XMSS_ENABLE_SHAKE256_256
+
+/**
+ * @brief
+ * Indicates whether the SHAKE256/256 default implementation is enabled.
+ *
+ * @details
+ * This macro is defined with the value 0 if you compile the library with
+ * ```
+ * cmake -DXMSS_SHAKE256_256={Disabled | OverrideInternal | OverrideGeneric}
+ * ```
+ */
+#cmakedefine01 XMSS_ENABLE_SHAKE256_256_DEFAULT
 
 /**
  * @brief

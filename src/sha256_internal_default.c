@@ -13,6 +13,8 @@
 
 #include "config.h"
 
+#include <assert.h>
+
 #if !XMSS_ENABLE_SHA256
 #   error "SHA-256 is disabled, so SHA-256 related source files must not be compiled."
 #endif
@@ -36,6 +38,14 @@
  */
 
 #include <string.h>
+
+#include "libxmss.h"
+#if LIBXMSS
+#   include "types.h"
+    // Forward-declare our implementation as static before including the public header.
+    LIBXMSS_STATIC
+    void xmss_sha256_process_block(XmssNativeValue256 *Hi, const uint32_t *Mi);
+#endif
 
 #include "override_sha256_internal.h"
 
@@ -210,8 +220,12 @@ static const uint32_t K[64] = {
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 };
 
-void sha256_process_block(XmssNativeValue256 *restrict const Hi, const uint32_t *restrict const Mi)
+LIBXMSS_STATIC
+void xmss_sha256_process_block(XmssNativeValue256 *const Hi, const uint32_t *const Mi)
 {
+    assert(Hi != NULL);
+    assert(Mi != NULL);
+
     /*
      * See: NIST FIPS 180-4, Section 6.2.2.
      *
@@ -265,3 +279,14 @@ void sha256_process_block(XmssNativeValue256 *restrict const Hi, const uint32_t 
         Hi->data[j] += working_variables[j];
     }
 }
+
+#ifndef DOXYGEN
+#undef a
+#undef b
+#undef c
+#undef d
+#undef e
+#undef f
+#undef g
+#undef h
+#endif

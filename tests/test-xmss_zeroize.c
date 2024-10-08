@@ -5,13 +5,13 @@
  * SPDX-FileContributor: Frans van Dorsselaer
  */
 
+#include "zeroize.c"
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "utils.h"
 
 /**
  * @brief

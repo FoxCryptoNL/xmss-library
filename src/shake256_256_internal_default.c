@@ -20,8 +20,8 @@
  * Bit operations on the 64-bit lanes is such that a byte stream message can be absorbed without swapping, i.e.,
  * directly into the memory occupied by the little-endian 64-bit lanes.
  *
- * This means that sponge_absorb() can simply XOR the message (in chunks of 136 bytes, the block size of SHAKE256) into
- * the memory pointed to by the state array **A**, whereas sponge_absorb_native() requires byte swapping
+ * This means that xmss_sponge_absorb() can simply XOR the message (in chunks of 136 bytes, the block size of SHAKE256)
+ * into the memory pointed to by the state array **A**, whereas xmss_sponge_absorb_native() requires byte swapping
  * for little-endian platforms. This is not a performance issue; SHA-3 requires read-read-modify-write
  * memory access, and byte swapping aligned data is free on most architectures.
  *
@@ -36,7 +36,8 @@
  * worthwhile.
  */
 
-#include "string.h"
+#include <assert.h>
+#include <string.h>
 
 #include "config.h"
 
@@ -47,19 +48,53 @@
 #   error "SHAKE256/256 uses generic interface, so SHAKE256/256 related internal source files must not be compiled."
 #endif
 
+#include "libxmss.h"
+#if LIBXMSS
+#   include <stdint.h>
+#   include "types.h"
+    // Forward-declare our implementation as static before including the public header.
+    LIBXMSS_STATIC
+    void xmss_sponge_absorb(uint64_t *A, uint_fast8_t offset, const uint8_t *bytes, uint_fast8_t byte_count);
+    LIBXMSS_STATIC
+    void xmss_sponge_absorb_native(uint64_t *A, const uint32_t *words, uint_fast8_t word_count);
+#   if XMSS_ENABLE_SIGNING
+    LIBXMSS_STATIC
+    void xmss_sponge_squeeze(XmssValue256 *digest, const uint64_t *A);
+#   endif
+    LIBXMSS_STATIC
+    void xmss_sponge_squeeze_native(XmssNativeValue256 *native_digest, const uint64_t *A);
+    LIBXMSS_STATIC
+    void xmss_keccak_p_1600_24(uint64_t *A);
+#endif
+
 #include "override_shake256_256_internal.h"
 
-void sponge_absorb(uint64_t *restrict const A, uint_fast16_t offset, const uint8_t *restrict bytes,
-    uint_fast16_t byte_count)
+LIBXMSS_STATIC
+void xmss_sponge_absorb(uint64_t *const A, const uint_fast8_t offset, const uint8_t *bytes, uint_fast8_t byte_count)
 {
+    /* Block size of SHAKE256/256 is 136 bytes. */
+    assert(A != NULL);
+    assert(offset < 136);
+    assert(bytes != NULL);
+    assert(byte_count >= 1);
+    assert(byte_count <= 136);
+    assert((size_t)offset + byte_count <= 136);
+
     uint8_t *S = (uint8_t *)A + offset;
     for (; byte_count > 0; --byte_count, ++bytes) {
         *S++ ^= *bytes;
     }
 }
 
-void sponge_absorb_native(uint64_t *restrict const A, const uint32_t *restrict words, uint_fast16_t word_count)
+LIBXMSS_STATIC
+void xmss_sponge_absorb_native(uint64_t *const A, const uint32_t *words, uint_fast8_t word_count)
 {
+    /* Block size of SHAKE256/256 is 136 bytes == 34 words. */
+    assert(A != NULL);
+    assert(words != NULL);
+    assert(word_count >= 1);
+    assert(word_count <= 34);
+
     uint8_t *S = (uint8_t *)A;
     for (; word_count > 0; --word_count, ++words) {
         *S++ ^= (uint8_t)(*words >> 24);
@@ -69,8 +104,14 @@ void sponge_absorb_native(uint64_t *restrict const A, const uint32_t *restrict w
     }
 }
 
-void sponge_squeeze(XmssValue256 *restrict const digest, const uint64_t *restrict const A)
+#if XMSS_ENABLE_SIGNING
+
+LIBXMSS_STATIC
+void xmss_sponge_squeeze(XmssValue256 *const digest, const uint64_t *const A)
 {
+    assert(digest != NULL);
+    assert(A != NULL);
+
     /*
      * NIST FIPS 202, Section 4, Step 7 & 8 & 9; we do not need Step 10.
      *
@@ -79,8 +120,14 @@ void sponge_squeeze(XmssValue256 *restrict const digest, const uint64_t *restric
     memcpy(digest, A, sizeof(XmssValue256));
 }
 
-void sponge_squeeze_native(XmssNativeValue256 *restrict const native_digest, const uint64_t *restrict const A)
+#endif
+
+LIBXMSS_STATIC
+void xmss_sponge_squeeze_native(XmssNativeValue256 *const native_digest, const uint64_t *const A)
 {
+    assert(native_digest != NULL);
+    assert(A != NULL);
+
     uint8_t *S = (uint8_t *)A;
     uint32_t *digest_word = native_digest->data;
     for (unsigned int i = 0; i < XMSS_VALUE_256_WORDS; ++i, ++digest_word, S += 4) {
@@ -199,8 +246,11 @@ static void byte_swap_if_required(uint64_t *const A)
     }
 }
 
-void keccak_p_1600_24(uint64_t *const A)
+LIBXMSS_STATIC
+void xmss_keccak_p_1600_24(uint64_t *const A)
 {
+    assert(A != NULL);
+
     /* For performance reasons, the local variables are defined uninitialized and not explicitly set to 0. */
 
     /* Working variables, reused for different parts of the algorithm. */

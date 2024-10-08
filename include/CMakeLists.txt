@@ -3,6 +3,7 @@
 
 set(XMSS_HEADER_FILES
     compat.h
+    errors.h
     generic_digest.h
     opaque_structures.h
     override_sha256_generic.h
@@ -13,6 +14,7 @@ set(XMSS_HEADER_FILES
     structures.h
     types.h
     verification.h
+    version.h
     ${CMAKE_CURRENT_BINARY_DIR}/xmss_config.h
 )
 
@@ -41,6 +43,7 @@ int main(void) { return 0; }
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
         PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
     )
+    set_property(TARGET _verify_${HEADER_FILENAME} PROPERTY FOLDER tests/verify_headers)
     # Note that building the executable is the real test. They're added as tests, anyway, to ensure that they're built
     # as part of the test cycle.
     add_test(NAME "Verify ${HEADER_FILENAME} is standalone" COMMAND "_verify_${HEADER_FILENAME}")
@@ -50,3 +53,5 @@ add_library(xmss_headers INTERFACE ${XMSS_HEADER_FILES})
 target_include_directories(xmss_headers
     INTERFACE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
 )
+
+install(FILES ${XMSS_HEADER_FILES} DESTINATION include/xmss)

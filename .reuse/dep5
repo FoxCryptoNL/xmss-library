@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: xmss-library
-Source: https://github.com/foxcrypto/xmss-library
+Source: https://github.com/FoxCryptoNL/xmss-library
 
 Files: docs/doxygen-awesome-css/*
 Copyright: 2021-2023 jothepro

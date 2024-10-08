@@ -5,6 +5,15 @@
  * SPDX-FileContributor: Frans van Dorsselaer
  */
 
+#include "libxmss.c"
+
+#if XMSS_ENABLE_SIGNING
+#   define reference_digest sha256_digest
+#else
+#   define REFERENCE_DIGEST_SHA256
+#   include "reference-digest.inc"
+#endif
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -12,11 +21,10 @@
 #include <string.h>
 
 #include "nist-test-vectors.h"
-#include "sha256_xmss_hashes.h"
 
 void on_test_vector(XmssValue256 *digest, const uint8_t *message, size_t message_length)
 {
-    sha256_digest(digest, message, message_length);
+    reference_digest(digest, message, message_length);
 }
 
 static bool monte_carlo_test(const char *const filename)
@@ -67,7 +75,7 @@ static bool monte_carlo_test(const char *const filename)
 
         for (int j = 3; j <= 1002; ++j) {
             /* Calculate MD[j]. */
-            sha256_digest(&digest, message, 3 * sizeof(XmssValue256));
+            reference_digest(&digest, message, 3 * sizeof(XmssValue256));
             /* Rotate message: MD[j-3] || MD[j-2] || MD[j-1] -> MD[j-2] || MD[j-1] || MD[j]. */
             memmove(message, message + sizeof(XmssValue256), 2 * sizeof(XmssValue256));
             memcpy(message + 2 * sizeof(XmssValue256), &digest, sizeof(XmssValue256));

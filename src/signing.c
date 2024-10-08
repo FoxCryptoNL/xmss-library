@@ -12,79 +12,37 @@
  * XMSS signature library.
  */
 
+#include "config.h"
+
+#if !XMSS_ENABLE_SIGNING
+#   error "Signing support is disabled, so this source file must not be compiled."
+#endif
+
 #include <assert.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "config.h"
-
 #include "signing.h"
 
 #include "compat_stdatomic.h"
 #include "endianness.h"
+#include "fault_detection_helpers.h"
 #include "index_permutation.h"
-#include "private.h"
+#include "signing_private.h"
 #include "structures.h"
 #include "types.h"
 #include "utils.h"
-#include "wotsp.h"
+#include "wotsp_signing.h"
 #include "xmss_hashes.h"
 #include "xmss_tree.h"
+#include "zeroize.h"
 
-/**
- * @brief
- * Make the function that uses the macro return return_value if condition is true.
- *
- * @details
- * The condition is checked twice to ensure that a single bit error in the CPU's flag register cannot cause the return
- * to be skipped. To ensure that the compiler cannot optimize the second if-statement away, the condition should involve
- * a variable that is declared volatile.
- *
- * @param[in] condition     The condition to check, should involve a volatile variable.
- * @param[in] return_value  Value for the function to return if the condition is true.
- */
-#define REDUNDANT_RETURN_IF(condition, return_value) \
-    {                                                \
-        if (condition) {                             \
-            return return_value;                     \
-        }                                            \
-        if (condition) {                             \
-            return return_value;                     \
-        }                                            \
-    }
-
-/**
- * @brief
- * This macro checks if result is XMSS_OKAY. If not, it makes the function that uses the macro return result.
- *
- * @details
- * This macro checks result multiple times for bit error resilience. To make sure that the compiler cannot optimize
- * away the redundant checks, result should be a volatile variable. If a bit error causes the program to end up in the
- * result != XMSS_OKAY arm when actually result == XMSS_OKAY, or when the first if-statement is skipped even though
- * result != XMSS_OKAY, XMSS_ERR_BIT_ERROR_DETECTED is returned.
- *
- * @param[in] result    XmssError to check. Must be stored in a volatile variable.
-*/
-#define REDUNDANT_RETURN_ERR(result)                \
-    {                                               \
-        if ((result) != XMSS_OKAY) {                \
-            if ((result) == XMSS_OKAY) {            \
-                return XMSS_ERR_BIT_ERROR_DETECTED; \
-            }                                       \
-            return result;                          \
-        }                                           \
-        if ((result) != XMSS_OKAY) {                \
-            return XMSS_ERR_BIT_ERROR_DETECTED;     \
-        }                                           \
-    }
-
-XmssError xmss_context_initialize(XmssSigningContext *restrict *const restrict context,
-    const XmssParameterSetOID parameter_set, const XmssReallocFunction custom_realloc,
-    const XmssFreeFunction custom_free, const XmssZeroizeFunction zeroize)
+XmssError xmss_context_initialize(XmssSigningContext **const context, const XmssParameterSetOID parameter_set,
+    const XmssReallocFunction custom_realloc, const XmssFreeFunction custom_free, const XmssZeroizeFunction zeroize)
 {
     XmssSigningContext *reallocated_context = NULL;
-    XmssError err_code = XMSS_OKAY;
+    XmssError err_code = XMSS_UNINITIALIZED;
 
     if (context == NULL || custom_realloc == NULL || custom_free == NULL) {
         return XMSS_ERR_NULL_POINTER;
@@ -109,25 +67,31 @@ XmssError xmss_context_initialize(XmssSigningContext *restrict *const restrict c
     (*context)->pad_ = 0;
     (*context)->zeroize = (zeroize != NULL) ? zeroize : xmss_zeroize;
 
-    err_code = xmss_get_hash_functions(HASH_ABSTRACTION(&(*context)->hash_functions) parameter_set);
+    DEFINE_HASH_FUNCTIONS;
+    err_code = INITIALIZE_HASH_FUNCTIONS(parameter_set);
     if (err_code != XMSS_OKAY) {
         (*context)->free(*context);
         *context = NULL;
         return err_code;
     }
+#if XMSS_ENABLE_HASH_ABSTRACTION
+    (*context)->hash_functions = hash_functions;
+#else
+    (*context)->pad_hash_functions = NULL;
+#endif
     if ((*context)->parameter_set != (*context)->redundant_parameter_set) {
         (*context)->free(*context);
         *context = NULL;
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     (*context)->initialized = (uint32_t)XMSS_INITIALIZATION_INITIALIZED;
 
-    return XMSS_OKAY;
+    return err_code;
 }
 
-XmssError xmss_load_public_key(XmssInternalCache **const restrict cache, XmssKeyContext *const restrict key_context,
-    const XmssPublicKeyInternalBlob *const restrict public_key)
+XmssError xmss_load_public_key(XmssInternalCache **const cache, XmssKeyContext *const key_context,
+    const XmssPublicKeyInternalBlob *const public_key)
 {
     /* To protect against bit errors in the CPU's flag register, we execute some if-statements in this function twice.
      * The variables being checked are volatile, so the compiler is not allowed to optimize away the redundant if. */
@@ -137,7 +101,7 @@ XmssError xmss_load_public_key(XmssInternalCache **const restrict cache, XmssKey
         return XMSS_ERR_NULL_POINTER;
     }
     XmssPublicKeyInternal *pub_key_internal = NULL;
-    volatile XmssError err_code = XMSS_OKAY;
+    volatile XmssError err_code = XMSS_UNINITIALIZED;
     XmssCacheType cache_type = XMSS_CACHE_NONE;
 
     /* xmss_verify_public_key() also checks that key_context is initialized. */
@@ -167,10 +131,10 @@ XmssError xmss_load_public_key(XmssInternalCache **const restrict cache, XmssKey
         *cache = NULL;
     }
 
-    big_endian_to_native_256(&key_context->public_key_root, &pub_key_internal->public_key);
+    big_endian_to_native_256(&key_context->public_key_root, &pub_key_internal->root);
     key_context->initialized = (uint32_t)XMSS_INITIALIZATION_WITH_PUBLIC_KEY;
 
-    return XMSS_OKAY;
+    return err_code;
 }
 
 void xmss_free_signing_context(XmssSigningContext *signing_context) {
@@ -190,8 +154,8 @@ void xmss_free_signing_context(XmssSigningContext *signing_context) {
  *
  * @retval XMSS_OKAY    The structure is correct.
  * @retval XMSS_ERR_BAD_CONTEXT The structure is incomplete or not initialized.
- * @retval XMSS_ERR_BIT_ERROR_DETECTED  A bit error was detected.
- *                                      (Note that bit errors can also cause different errors or segfaults.)
+ * @retval XMSS_ERR_FAULT_DETECTED  A bit error was detected.
+ *                                  (Note that bit errors can also cause different errors or segfaults.)
  */
 static XmssError check_signing_context(const XmssSigningContext *signing_context)
 {
@@ -204,17 +168,11 @@ static XmssError check_signing_context(const XmssSigningContext *signing_context
         return XMSS_ERR_BAD_CONTEXT;
     }
 #if XMSS_ENABLE_HASH_ABSTRACTION
-    if (signing_context->hash_functions.digest == NULL || signing_context->hash_functions.native_digest == NULL
-            || signing_context->hash_functions.F == NULL || signing_context->hash_functions.H == NULL
-            || signing_context->hash_functions.H_msg == NULL || signing_context->hash_functions.PRF == NULL
-            || signing_context->hash_functions.PRFkeygen == NULL || signing_context->hash_functions.PRFindex == NULL) {
+    if (signing_context->hash_functions == NULL) {
         return XMSS_ERR_BAD_CONTEXT;
     }
 #else
-    if (signing_context->pad_hash_abstraction[0] != NULL || signing_context->pad_hash_abstraction[1] != NULL
-            || signing_context->pad_hash_abstraction[2] != NULL || signing_context->pad_hash_abstraction[3] != NULL
-            || signing_context->pad_hash_abstraction[4] != NULL || signing_context->pad_hash_abstraction[5] != NULL
-            || signing_context->pad_hash_abstraction[6] != NULL|| signing_context->pad_hash_abstraction[7] != NULL) {
+    if (signing_context->pad_hash_functions != NULL) {
         return XMSS_ERR_BAD_CONTEXT;
     }
 #endif
@@ -222,7 +180,7 @@ static XmssError check_signing_context(const XmssSigningContext *signing_context
         return XMSS_ERR_BAD_CONTEXT;
     }
     if (signing_context->parameter_set != signing_context->redundant_parameter_set) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     return XMSS_OKAY;
@@ -235,7 +193,7 @@ static XmssError check_signing_context(const XmssSigningContext *signing_context
  * @details
  * Should only be used for supported parameter sets.
  *
- * @param parameter_set The parameter set for which to get the index space size.
+ * @param[in] parameter_set The parameter set for which to get the index space size.
  *
  * @returns The size of the index space for the given parameter set, or 0 if parameter set is unsupported.
  */
@@ -299,7 +257,7 @@ static XmssError partitions_to_tree_height(uint32_t *height_out, uint32_t number
  * @retval XMSS_ERR_NULL_POINTER    A NULL pointer was passed.
  * @retval XMSS_ERR_BAD_CONTEXT     The key_context is uninitialized.
  */
-static XmssError check_key_context_well_formed(const XmssKeyContext *const restrict key_context)
+static XmssError check_key_context_well_formed(const XmssKeyContext *const key_context)
 {
     if (key_context == NULL) {
         return XMSS_ERR_NULL_POINTER;
@@ -312,7 +270,7 @@ static XmssError check_key_context_well_formed(const XmssKeyContext *const restr
             || key_context->private_stateful.partition_end != key_context->redundant_private_stateful.partition_end
             || memcmp(key_context->private_key_digest.data, key_context->redundant_private_key_digest.data,
                 sizeof(XmssValue256)) != 0) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     return check_signing_context(&key_context->context);
@@ -356,93 +314,6 @@ void xmss_free_key_context(XmssKeyContext *key_context)
 
 /**
  * @brief
- * Return values for compare_values_256.
- *
- * @details
- * The values are chosen to be both non-zero and with large hamming distance to be resilient to bit errors.
- */
-typedef enum {
-    /** @brief Values are equal. */
-    VALUES_ARE_EQUAL = XMSS_DISTANT_VALUE_1,
-    /** @brief Values are not equal. */
-    VALUES_ARE_NOT_EQUAL = XMSS_DISTANT_VALUE_2
-} ValueCompareResult;
-
-/**
- * @brief
- * Compare two 256-bit values in a bit error resilient way.
- *
- * @details
- * This function is written in such a way that a single random bit error cannot cause the function to return
- * VALUES_ARE_EQUAL when they are not equal. If the return value of this function is checked, it should be stored
- * in a volatile variable which is then checked twice, to ensure that a bit error cannot skip the check.
- *
- * @warning
- * It is the caller's responsibility to ensure that both pointers are valid. This is not checked.
- *
- * @param[in] value1     The first value.
- * @param[in] value2     The second value.
- * @retval VALUES_ARE_EQUAL     The values are equal.
- * @retval VALUES_ARE_NOT_EQUAL The values are not equal.
- */
-static inline ValueCompareResult compare_values_256(const XmssValue256 *const value1, const XmssValue256 *const value2)
-{
-    assert(value1 != NULL && value2 != NULL);
-    volatile uint8_t difference = 0;
-
-    for (uint_fast8_t i = 0; i < sizeof(XmssValue256); i++) {
-        difference |= value1->data[i] ^ value2->data[i];
-    }
-    if (difference) {
-        return VALUES_ARE_NOT_EQUAL;
-    }
-
-    /* Repeat the check so that a single bit error cannot cause us to wrongly output VALUES_ARE_EQUAL.
-     * Because every loop iteration updates a volatile variable, the compiler is not allowed to optimize away this
-     * second loop.
-     *
-     * Note: It is technically allowed for the compiler to cache value1->data[i] ^ value2->data[i] from the first
-     * loop. If value1 and value2 differ in exactly one bit and a random bit error causes that bit to flip, and the
-     * compiler uses this optimization, then a single bit-flip *could* cause the function to wrongly output
-     * VALUES_ARE_EQUAL. We consider the combined probability of these events negligible. */
-    for (uint_fast8_t i = 0; i < sizeof(XmssValue256); i++) {
-        difference |= value1->data[i] ^ value2->data[i];
-    }
-    if (difference) {
-        return VALUES_ARE_NOT_EQUAL;
-    }
-
-    return VALUES_ARE_EQUAL;
-}
-
-/**
- * @brief
- * Compare two native 256-bit values in a bit error resilient way.
- *
- * @details
- * This function is written in such a way that a single random bit error cannot cause the function to return
- * VALUES_ARE_EQUAL when they are not equal. If the return value of this function is checked, it should be stored
- * in a volatile variable which is then checked twice, to ensure that a bit error cannot skip the check.
- *
- * @warning
- * It is the caller's responsibility to ensure that both pointers are valid. This is not checked.
- *
- * @param[in] value1     The first value.
- * @param[in] value2     The second value.
- * @retval VALUES_ARE_EQUAL     The values are equal.
- * @retval VALUES_ARE_NOT_EQUAL The values are not equal.
- */
-static inline ValueCompareResult compare_native_values_256(const XmssNativeValue256 *const value1, const XmssNativeValue256 *const value2)
-{
-    /**
-     * XmssNativeValue256 can be safely cast to XmssValue256 as the former has stricter alignment requirements, and
-     * the types have the same size.
-    */
-    return compare_values_256((const XmssValue256 *)value1, (const XmssValue256 *)value2);
-}
-
-/**
- * @brief
  * Check that the integrity digest of a blob matches the content.
  *
  * @details
@@ -460,17 +331,14 @@ static inline ValueCompareResult compare_native_values_256(const XmssNativeValue
  * @retval VALUES_ARE_EQUAL     The digests match.
  * @retval VALUES_ARE_NOT_EQUAL The digests do not match.
  */
-static inline ValueCompareResult check_integrity_digest(
-    HASH_ABSTRACTION(const xmss_hashes *const restrict hash_functions)
-    const XmssValue256 *const restrict integrity_digest, const uint8_t *const restrict data, const size_t size)
+static inline ValueCompareResult check_integrity_digest(HASH_FUNCTIONS_PARAMETER
+    const XmssValue256 *const integrity_digest, const uint8_t *const data, const size_t size)
 {
-#if XMSS_ENABLE_HASH_ABSTRACTION
-    assert(hash_functions != NULL);
-#endif
+    ASSERT_HASH_FUNCTIONS();
     assert(integrity_digest != NULL && data != NULL);
 
-    XmssValue256 digest;  /* Uninitialized for performance reasons. */
-    xmss_digest(HASH_ABSTRACTION(hash_functions) &digest, data, size);
+    XmssValue256 digest = { 0 };
+    xmss_digest(HASH_FUNCTIONS &digest, data, size);
     /* A bit error in size could lead to undefined behavior. We do not check for it, because in practice, reading an
      * incorrect number of bytes will lead either to an incorrect integrity digest, or to a segfault due to an
      * out-of-bounds read. */
@@ -491,7 +359,7 @@ static inline ValueCompareResult check_integrity_digest(
  * @retval XMSS_OKAY    The check passed.
  * @retval XMSS_ERR_NULL_POINTER    A NULL pointer was passed.
  * @retval XMSS_ERR_BAD_CONTEXT     Some part of the key_context did not match expectation.
- * @retval XMSS_ERR_BIT_ERROR_DETECTED  A bit error was detected.
+ * @retval XMSS_ERR_FAULT_DETECTED  A bit error was detected.
  *                                      (Note that bit errors can also cause different errors or segfaults.)
 */
 static XmssError index_permutation_check(const XmssKeyContext *const key_context)
@@ -504,7 +372,7 @@ static XmssError index_permutation_check(const XmssKeyContext *const key_context
     REDUNDANT_RETURN_ERR(result);
 
     if (key_context->private_stateless.index_obfuscation_setting == XMSS_INDEX_OBFUSCATION_OFF) {
-        return XMSS_OKAY;
+        return result;
     }
 
     const uint32_t index_space_size = 1 << XMSS_TREE_DEPTH(key_context->context.parameter_set);
@@ -527,25 +395,25 @@ static XmssError index_permutation_check(const XmssKeyContext *const key_context
         check_square_sum += ((uint64_t)key_context->obfuscation[index]) * key_context->obfuscation[index];
     }
     if (check_sum != (uint64_t)(index_space_size - 1) * (index_space_size / 2)) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
      }
      if (check_square_sum !=
-            (uint64_t)(index_space_size - 1) * (index_space_size) * (2 * (index_space_size - 1) + 1) / 6) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+            (uint64_t)(index_space_size - 1) * (index_space_size) * (2 * (index_space_size - 1ull) + 1) / 6) {
+        return XMSS_ERR_FAULT_DETECTED;
      }
      /* Recompute the digest to check if it matches the digest in the stateless key part.
       * This does not use the check_integrity_digest function as a native digest function is used.
       */
     XmssNativeValue256 check_digest = {0};
-    xmss_native_digest(HASH_ABSTRACTION(&key_context->context.hash_functions)
-        &check_digest, key_context->obfuscation, index_space_size);
+    xmss_native_digest(HASH_FUNCTIONS_FROM(key_context->context) &check_digest, key_context->obfuscation,
+        index_space_size);
 
     volatile ValueCompareResult digest_comparison = compare_native_values_256(&check_digest,
         &key_context->private_stateless.obfuscation_integrity);
-    REDUNDANT_RETURN_IF(digest_comparison != VALUES_ARE_EQUAL, XMSS_ERR_BIT_ERROR_DETECTED);
+    REDUNDANT_RETURN_IF(digest_comparison != VALUES_ARE_EQUAL, XMSS_ERR_FAULT_DETECTED);
 
     /* All checks succeeded. */
-    return XMSS_OKAY;
+    return result;
 }
 
 /**
@@ -579,8 +447,8 @@ static XmssError populate_index_obfuscation_permutation(XmssKeyContext *key_cont
         return XMSS_ERR_BAD_CONTEXT;
     }
     uint32_t index_space_size = 1 << XMSS_TREE_DEPTH(key_context->context.parameter_set);
-    return generate_pseudorandom_permutation(HASH_ABSTRACTION(&key_context->context.hash_functions) key_context->obfuscation,
-        index_space_size, &key_context->private_stateless.index_obfuscation_random,
+    return generate_pseudorandom_permutation(HASH_FUNCTIONS_FROM(key_context->context)
+        key_context->obfuscation, index_space_size, &key_context->private_stateless.index_obfuscation_random,
         &key_context->private_stateless.seed);
 }
 
@@ -607,12 +475,12 @@ static XmssError populate_index_obfuscation_permutation(XmssKeyContext *key_cont
  * @retval XMSS_OKAY    Success.
  * @retval XMSS_ERR_NULL_POINTER    A NULL pointer was passed.
  * @retval XMSS_ERR_BAD_CONTEXT     The context did not match expectation.
- * @retval XMSS_ERR_BIT_ERROR_DETECTED  A bit error was detected.
- *                                      (Note that bit errors can also cause different errors or segfaults.)
+ * @retval XMSS_ERR_FAULT_DETECTED  A bit error was detected.
+ *                                  (Note that bit errors can also cause different errors or segfaults.)
  */
 static XmssError generate_index_obfuscation_permutation(XmssKeyContext *key_context)
 {
-    XmssError result = populate_index_obfuscation_permutation(key_context);
+    volatile XmssError result = populate_index_obfuscation_permutation(key_context);
 
     REDUNDANT_RETURN_ERR(result);
 
@@ -621,12 +489,13 @@ static XmssError generate_index_obfuscation_permutation(XmssKeyContext *key_cont
          * one generated using the same 32-bit words on a system with different endianness.
          */
         uint32_t index_space_size = 1 << XMSS_TREE_DEPTH(key_context->context.parameter_set);
-        xmss_native_digest(HASH_ABSTRACTION(&key_context->context.hash_functions)
+        xmss_native_digest(HASH_FUNCTIONS_FROM(key_context->context)
             &key_context->private_stateless.obfuscation_integrity, key_context->obfuscation, index_space_size);
 
         /* Re-run the permutation generation algorithm to ensure that if bit errors affect the deterministic nature of
          * the pseudo-random generation, an error will be returned.
          */
+        result = XMSS_UNINITIALIZED;
         result = populate_index_obfuscation_permutation(key_context);
         REDUNDANT_RETURN_ERR(result);
     }
@@ -647,11 +516,11 @@ static XmssError generate_index_obfuscation_permutation(XmssKeyContext *key_cont
  * @retval XMSS_OKAY    Success.
  * @retval XMSS_ERR_NULL_POINTER    A NULL pointer was passed.
  * @retval XMSS_ERR_BAD_CONTEXT     The context did not match expectations.
- * @retval XMSS_ERR_BIT_ERROR_DETECTED  A bit error was detected.
- *                                      (Note that bit errors can also cause different errors or segfaults.)
+ * @retval XMSS_ERR_FAULT_DETECTED  A bit error was detected.
+ *                                  (Note that bit errors can also cause different errors or segfaults.)
 */
 static XmssError load_index_obfuscation_permutation(XmssKeyContext *key_context) {
-    XmssError result = populate_index_obfuscation_permutation(key_context);
+    volatile XmssError result = populate_index_obfuscation_permutation(key_context);
     REDUNDANT_RETURN_ERR(result);
     /* Use index_permutation_check to verify the check-sums, and re-compute the digest and compare it. */
     return index_permutation_check(key_context);
@@ -679,16 +548,16 @@ static XmssError load_index_obfuscation_permutation(XmssKeyContext *key_context)
  * @retval XMSS_OKAY    obfuscated_index was successfully set.
  * @retval XMSS_ERR_NULL_POINTER    A NULL pointer was passed.
  * @retval XMSS_ERR_BAD_CONTEXT     The permutation data wasn't correctly populated in the key_context.
- * @retval XMSS_ERR_BIT_ERROR_DETECTED  A bit error was detected.
- *                                      (Note that bit errors can also cause different errors or segfaults.)
+ * @retval XMSS_ERR_FAULT_DETECTED  A bit error was detected.
+ *                                  (Note that bit errors can also cause different errors or segfaults.)
 */
-static XmssError obfuscate_index(volatile uint32_t *obfuscated_index,
-    const XmssKeyContext *const key_context, const uint32_t index)
+static XmssError obfuscate_index(volatile uint32_t *obfuscated_index, const XmssKeyContext *const key_context,
+    const uint32_t index)
 {
     if (key_context == NULL || obfuscated_index == NULL) {
         return XMSS_ERR_NULL_POINTER;
     }
-    XmssError result = index_permutation_check(key_context);
+    volatile XmssError result = index_permutation_check(key_context);
     REDUNDANT_RETURN_ERR(result);
 
     if (key_context->private_stateless.index_obfuscation_setting == XMSS_INDEX_OBFUSCATION_OFF) {
@@ -721,22 +590,20 @@ static XmssError obfuscate_index(volatile uint32_t *obfuscated_index,
  * @retval XMSS_ERR_NULL_POINTER    private_key is NULL.
  * @retval XMSS_ERR_INVALID_BLOB    The size, integrity digest or version are incorrect.
  * @retval XMSS_ERR_ARGUMENT_MISMATCH   expected_scheme_identifier does not match.
- * @retval XMSS_ERR_BIT_ERROR_DETECTED  A bit error was detected.
- *                                      (Note that bit errors can also cause different errors or segfaults.)
+ * @retval XMSS_ERR_FAULT_DETECTED  A bit error was detected.
+ *                                  (Note that bit errors can also cause different errors or segfaults.)
  */
-static XmssError verify_private_key_stateless_internal(
-    HASH_ABSTRACTION(const xmss_hashes *const hash_functions)
-    const XmssPrivateKeyStatelessBlob *const private_key,
-    const uint32_t expected_scheme_identifier,
+static XmssError verify_private_key_stateless_internal(HASH_FUNCTIONS_PARAMETER
+    const XmssPrivateKeyStatelessBlob *const private_key, const uint32_t expected_scheme_identifier,
     const uint32_t redundant_scheme_identifier)
 {
     /* To protect against bit errors in the CPU's flag register, we execute some if-statements in this function twice.
      * The variables being checked are volatile, so the compiler is not allowed to optimize away the redundant if. */
-    volatile ValueCompareResult value_cmp = VALUES_ARE_EQUAL;
+    volatile ValueCompareResult value_cmp = VALUES_ARE_NOT_EQUAL;
     XmssPrivateKeyStateless *private_key_inner = NULL;
 
     if (expected_scheme_identifier != redundant_scheme_identifier) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     /* No redundant NULL pointer check because a bit error can only lead to a segfault here. */
@@ -758,16 +625,16 @@ static XmssError verify_private_key_stateless_internal(
             convert_big_endian_word(XMSS_VERSION_CURRENT_PRIVATE_KEY_STATELESS_STORAGE)) {
         return XMSS_ERR_INVALID_BLOB;
     }
-    value_cmp = check_integrity_digest(HASH_ABSTRACTION(hash_functions) &private_key_inner->integrity,
+    value_cmp = check_integrity_digest(HASH_FUNCTIONS &private_key_inner->integrity,
         private_key->data + sizeof(private_key_inner->integrity),
         private_key->data_size - sizeof(private_key_inner->integrity));
-    REDUNDANT_RETURN_IF(value_cmp != VALUES_ARE_EQUAL, XMSS_ERR_BIT_ERROR_DETECTED);
+    REDUNDANT_RETURN_IF(value_cmp != VALUES_ARE_EQUAL, XMSS_ERR_FAULT_DETECTED);
 
     if (convert_big_endian_word(private_key_inner->scheme_identifier) != expected_scheme_identifier) {
         return XMSS_ERR_ARGUMENT_MISMATCH;
     }
     if (convert_big_endian_word(private_key_inner->redundant_scheme_identifier) != redundant_scheme_identifier) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
     return XMSS_OKAY;
 }
@@ -777,8 +644,8 @@ XmssError xmss_verify_private_key_stateless(const XmssPrivateKeyStatelessBlob *c
 {
     volatile XmssError result = check_signing_context(context);
     REDUNDANT_RETURN_ERR(result);
-    return verify_private_key_stateless_internal(HASH_ABSTRACTION(&context->hash_functions) private_key,
-        context->parameter_set, context->redundant_parameter_set);
+    return verify_private_key_stateless_internal(HASH_FUNCTIONS_FROM(*context) private_key, context->parameter_set,
+        context->redundant_parameter_set);
 }
 
 /**
@@ -795,16 +662,16 @@ XmssError xmss_verify_private_key_stateless(const XmssPrivateKeyStatelessBlob *c
  * @retval XMSS_ERR_NULL_POINTER    key_stateful or context is NULL.
  * @retval XMSS_ERR_ARGUMENT_MISMATCH   The signing context and the blob are incompatible.
  * @retval XMSS_ERR_INVALID_BLOB        The digest did not verify or the blob did not conform to expectations.
- * @retval XMSS_ERR_BIT_ERROR_DETECTED  A bit error was detected.
- *                                      (Note that bit errors can also cause different errors or segfaults.)
+ * @retval XMSS_ERR_FAULT_DETECTED  A bit error was detected.
+ *                                  (Note that bit errors can also cause different errors or segfaults.)
  */
-static XmssError xmss_verify_private_key_stateful_blob(
-    const XmssPrivateKeyStatefulBlob *key_stateful, const XmssSigningContext *context)
+static XmssError xmss_verify_private_key_stateful_blob(const XmssPrivateKeyStatefulBlob *const key_stateful,
+    const XmssSigningContext *const context)
 {
     /* To protect against bit errors in the CPU's flag register, we execute some if-statements in this function twice.
      * The variables being checked are volatile, so the compiler is not allowed to optimize away the redundant if. */
 
-    volatile ValueCompareResult value_cmp = VALUES_ARE_EQUAL;
+    volatile ValueCompareResult value_cmp = VALUES_ARE_NOT_EQUAL;
     XmssError result = check_signing_context(context);
     REDUNDANT_RETURN_ERR(result);
 
@@ -825,15 +692,15 @@ static XmssError xmss_verify_private_key_stateful_blob(
     }
     if (key_stateful_inner->redundant_version !=
         convert_big_endian_word(XMSS_VERSION_CURRENT_PRIVATE_KEY_STATEFUL_STORAGE)) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     /* Check the partition. */
     if (key_stateful_inner->contents.partition_start != key_stateful_inner->redundant_contents.partition_start) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
     if (key_stateful_inner->contents.partition_end != key_stateful_inner->redundant_contents.partition_end) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     /* Check the scheme identifier. */
@@ -841,29 +708,29 @@ static XmssError xmss_verify_private_key_stateful_blob(
         return XMSS_ERR_ARGUMENT_MISMATCH;
     }
     if (key_stateful_inner->redundant_scheme_identifier != convert_big_endian_word(context->redundant_parameter_set)) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
     if (key_stateful_inner->scheme_identifier != key_stateful_inner->redundant_scheme_identifier) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
-    value_cmp = check_integrity_digest(HASH_ABSTRACTION(&context->hash_functions) &key_stateful_inner->integrity,
+    value_cmp = check_integrity_digest(HASH_FUNCTIONS_FROM(*context) &key_stateful_inner->integrity,
         key_stateful->data + sizeof(key_stateful_inner->integrity),
         key_stateful->data_size - sizeof(key_stateful_inner->integrity));
-    REDUNDANT_RETURN_IF(value_cmp != VALUES_ARE_EQUAL, XMSS_ERR_BIT_ERROR_DETECTED);
+    REDUNDANT_RETURN_IF(value_cmp != VALUES_ARE_EQUAL, XMSS_ERR_FAULT_DETECTED);
 
     return XMSS_OKAY;
 }
 
-XmssError xmss_verify_private_key_stateful(
-    const XmssPrivateKeyStatefulBlob *key_usage, const XmssPrivateKeyStatelessBlob *private_key,
-    const XmssKeyContext *key_context, const XmssSigningContext *signing_context)
+XmssError xmss_verify_private_key_stateful(const XmssPrivateKeyStatefulBlob *const key_usage,
+    const XmssPrivateKeyStatelessBlob *const private_key, const XmssKeyContext *const key_context,
+    const XmssSigningContext *const signing_context)
 {
     /* To protect against bit errors in the CPU's flag register, we execute some if-statements in this function twice.
      * The variables being checked are volatile, so the compiler is not allowed to optimize away the redundant if. */
 
     const XmssSigningContext *context = NULL;
-    volatile ValueCompareResult value_cmp = VALUES_ARE_EQUAL;
+    volatile ValueCompareResult value_cmp = VALUES_ARE_NOT_EQUAL;
 
     /* No redundant NULL pointer checks because a bit error here can only lead to a segfault. */
     if (key_usage == NULL) {
@@ -894,6 +761,7 @@ XmssError xmss_verify_private_key_stateful(
     volatile bool verified_against_key_ctx = false;
     volatile bool verified_against_private_key = false;
     if (key_context != NULL) {
+        result = XMSS_UNINITIALIZED;
         result = check_key_context_well_formed(key_context);
         REDUNDANT_RETURN_ERR(result);
 
@@ -918,6 +786,7 @@ XmssError xmss_verify_private_key_stateful(
         value_cmp = compare_values_256(&stateless->integrity, &stateful->digest_of_private_key_static_blob);
         REDUNDANT_RETURN_IF(value_cmp != VALUES_ARE_EQUAL, XMSS_ERR_ARGUMENT_MISMATCH);
 
+        result = XMSS_UNINITIALIZED;
         result = xmss_verify_private_key_stateless(private_key, context);
         REDUNDANT_RETURN_ERR(result);
 
@@ -926,9 +795,9 @@ XmssError xmss_verify_private_key_stateful(
 
     /* Verify that a bit error didn't cause us to skip a check. */
     if (verified_against_key_ctx != (key_context != NULL) || verified_against_private_key != (private_key != NULL)) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
-    return XMSS_OKAY;
+    return result;
 }
 
 XmssError xmss_get_caching_in_public_key(XmssCacheType *const cache_type, uint32_t *const cache_level,
@@ -943,7 +812,7 @@ XmssError xmss_get_caching_in_public_key(XmssCacheType *const cache_type, uint32
     XmssPublicKeyInternal *pub_key_data = (XmssPublicKeyInternal *)pub_key->data;
     *cache_type = (XmssCacheType)pub_key_data->cache_type;
     *cache_level = pub_key_data->cache_level;
-    return XMSS_OKAY;
+    return err_code;
 }
 
 /**
@@ -963,18 +832,15 @@ XmssError xmss_get_caching_in_public_key(XmssCacheType *const cache_type, uint32
  * @param[in]   context     The signing context.
  * @retval XMSS_OKAY    Success.
  * @retval XMSS_ERR_NULL_POINTER    key_context, stateless, stateless or context is NULL.
- * @retval XMSS_ERR_BIT_ERROR_DETECTED  A bit error was detected.
- *                                      (Note that bit errors can also cause different errors or segfaults.)
+ * @retval XMSS_ERR_FAULT_DETECTED  A bit error was detected.
+ *                                  (Note that bit errors can also cause different errors or segfaults.)
 */
-static XmssError xmss_load_private_key_internal(
-    XmssKeyContext *key_context, const XmssPrivateKeyStateless *const stateless,
-    const XmssPrivateKeyStateful *const stateful, const XmssSigningContext *const context)
+static XmssError xmss_load_private_key_internal(XmssKeyContext *const key_context,
+    const XmssPrivateKeyStateless *const stateless, const XmssPrivateKeyStateful *const stateful,
+    const XmssSigningContext *const context)
 {
-    volatile ValueCompareResult digest_cmp = VALUES_ARE_EQUAL;
-    XmssError err_code = XMSS_OKAY;
-#if XMSS_ENABLE_HASH_ABSTRACTION
-    xmss_hashes hash_functions;
-#endif
+    volatile ValueCompareResult digest_cmp = VALUES_ARE_NOT_EQUAL;
+    XmssError err_code = XMSS_UNINITIALIZED;
 
     if (key_context == NULL || stateless == NULL || stateful == NULL || context == NULL) {
         return XMSS_ERR_NULL_POINTER;
@@ -982,7 +848,7 @@ static XmssError xmss_load_private_key_internal(
 
     key_context->initialized = (uint32_t)XMSS_INITIALIZATION_UNINITIALIZED;
     key_context->pad_ = 0;
-    memcpy(&key_context->context, context, sizeof(key_context->context));
+    key_context->context = *context;
     key_context->private_stateful.partition_start = convert_big_endian_word(stateful->contents.partition_start);
     key_context->private_stateful.partition_end = convert_big_endian_word(stateful->contents.partition_end);
     key_context->redundant_private_stateful.partition_start
@@ -993,7 +859,7 @@ static XmssError xmss_load_private_key_internal(
     key_context->reserved_signatures_start = key_context->private_stateful.partition_start;
     key_context->redundant_reserved_signatures_start = key_context->redundant_private_stateful.partition_start;
     if (key_context->reserved_signatures_start != key_context->redundant_reserved_signatures_start) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
     {
         big_endian_to_native_256(&key_context->private_stateless.prf_seed,
@@ -1008,10 +874,10 @@ static XmssError xmss_load_private_key_internal(
             convert_big_endian_word(stateless->contents.index_obfuscation_setting);
         big_endian_to_native_256(&key_context->private_stateless.index_obfuscation_random,
             (const XmssValue256 *)&stateless->contents.index_obfuscation_random);
-        value_256_copy(&key_context->private_key_digest, &stateless->integrity);
+        key_context->private_key_digest = stateless->integrity;
+        key_context->redundant_private_key_digest = stateless->integrity;
         key_context->context.parameter_set = convert_big_endian_word(stateless->scheme_identifier);
         key_context->context.redundant_parameter_set = convert_big_endian_word(stateless->scheme_identifier);
-        value_256_copy(&key_context->redundant_private_key_digest, &stateless->integrity);
         XmssError result = load_index_obfuscation_permutation(key_context);
         if (result != XMSS_OKAY) {
             context->zeroize(key_context, XMSS_KEY_CONTEXT_SIZE(context->parameter_set,
@@ -1026,30 +892,30 @@ static XmssError xmss_load_private_key_internal(
             || key_context->private_stateful.partition_end != key_context->redundant_private_stateful.partition_end
             || compare_values_256(&key_context->private_key_digest, &key_context->redundant_private_key_digest)
                 != VALUES_ARE_EQUAL) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     /* Recalculate the integrity hash of the stateless part. This is to verify that there have been no bit errors in
      * the private key since the integrity hash was calculated, and that it was correctly copied to key_context. */
-    err_code = xmss_get_hash_functions(HASH_ABSTRACTION(&hash_functions)
-        (XmssParameterSetOID)key_context->context.parameter_set);
+    DEFINE_HASH_FUNCTIONS;
+    err_code = INITIALIZE_HASH_FUNCTIONS((XmssParameterSetOID)key_context->context.parameter_set);
     if (err_code != XMSS_OKAY) {
         return err_code;
     }
-    digest_cmp = check_integrity_digest(HASH_ABSTRACTION(&hash_functions) &key_context->private_key_digest,
+    digest_cmp = check_integrity_digest(HASH_FUNCTIONS &key_context->private_key_digest,
         (uint8_t *)stateless + sizeof(stateless->integrity),
         sizeof(XmssPrivateKeyStateless) - sizeof(stateless->integrity));
     /* Checking the return value only once because the digests can only be different if a bit error already happened. */
     if (digest_cmp != VALUES_ARE_EQUAL) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     key_context->initialized = (uint32_t)XMSS_INITIALIZATION_INITIALIZED;
-    return XMSS_OKAY;
+    return err_code;
 }
 
-XmssError xmss_load_private_key(
-    XmssKeyContext **const key_context, const XmssPrivateKeyStatelessBlob *const private_key,
+XmssError xmss_load_private_key(XmssKeyContext **const key_context,
+    const XmssPrivateKeyStatelessBlob *const private_key,
     const XmssPrivateKeyStatefulBlob *const key_usage, const XmssSigningContext *const context)
 {
     /* To protect against bit errors in the CPU's flag register, we execute some if-statements in this function twice.
@@ -1066,6 +932,7 @@ XmssError xmss_load_private_key(
      */
     volatile XmssError result = xmss_verify_private_key_stateless(private_key, context);
     REDUNDANT_RETURN_ERR(result);
+    result = XMSS_UNINITIALIZED;
     result = xmss_verify_private_key_stateful(key_usage, private_key, NULL, context);
     REDUNDANT_RETURN_ERR(result);
 
@@ -1083,6 +950,7 @@ XmssError xmss_load_private_key(
     /* clear the contents of the key_context structure. */
     memset(*key_context, 0, key_context_size);
 
+    result = XMSS_UNINITIALIZED;
     result = xmss_load_private_key_internal(*key_context, private_key_inner, key_usage_inner, context);
     REDUNDANT_RETURN_IF(result == XMSS_OKAY, XMSS_OKAY);
 
@@ -1108,9 +976,9 @@ XmssError xmss_load_private_key(
  * @retval XMSS_ERR_BAD_CONTEXT     context is not a correctly initialized context.
  * @retval XMSS_ERR_INVALID_ARGUMENT    An invalid index_obfuscation_setting is passed.
  */
-static XmssError generate_private_key_internal(
-    const XmssSigningContext *context, XmssKeyContext **key_context, const XmssBuffer *secure_random_seeds,
-    const XmssIndexObfuscationSetting index_obfuscation_setting, const XmssBuffer *index_obfuscation_random)
+static XmssError generate_private_key_internal(const XmssSigningContext *const context,
+    XmssKeyContext **key_context, const XmssBuffer *const secure_random_seeds,
+    const XmssIndexObfuscationSetting index_obfuscation_setting, const XmssBuffer *const index_obfuscation_random)
 {
     XmssError result = check_signing_context(context);
     if (result != XMSS_OKAY) {
@@ -1170,7 +1038,7 @@ static XmssError generate_private_key_internal(
 
     memset(reallocated_key_context, 0, key_context_size);
     /* Set the signing context */
-    memcpy(&reallocated_key_context->context, context, sizeof(reallocated_key_context->context));
+    reallocated_key_context->context = *context;
     /* initialize the stateless part */
     {
         XmssPrivateKeyStatelessContents *stateless_part = &reallocated_key_context->private_stateless;
@@ -1206,6 +1074,7 @@ static XmssError generate_private_key_internal(
         = reallocated_key_context->redundant_private_stateful.partition_start;
 
     /* Generate the index obfuscation permutation. */
+    result = XMSS_UNINITIALIZED;
     result = generate_index_obfuscation_permutation(reallocated_key_context);
     if (result != XMSS_OKAY) {
         /* zeroizes the key context, frees it and sets the pointer to NULL. */
@@ -1217,7 +1086,7 @@ static XmssError generate_private_key_internal(
     /* Set the state to initialized (without public key) */
     reallocated_key_context->initialized = (uint32_t)XMSS_INITIALIZATION_INITIALIZED;
     reallocated_key_context->pad_ = 0;
-    return XMSS_OKAY;
+    return result;
 }
 
 /**
@@ -1231,15 +1100,15 @@ static XmssError generate_private_key_internal(
  * @retval XMSS_ERR_NULL_POINTER    A NULL pointer was passed.
  * @retval XMSS_ERR_ALLOC_ERROR     Memory allocation caused an error.
  * @retval XMSS_ERR_BAD_CONTEXT     context is not a correctly initialized context.
- * @retval XMSS_ERR_BIT_ERROR_DETECTED  A bit error was detected.
- *                                      (Note that bit errors can also cause different errors or segfaults.)
+ * @retval XMSS_ERR_FAULT_DETECTED  A bit error was detected.
+ *                                  (Note that bit errors can also cause different errors or segfaults.)
  */
-static XmssError export_private_key_stateless(XmssKeyContext *key_context,
+static XmssError export_private_key_stateless(const XmssKeyContext *const key_context,
         XmssPrivateKeyStatelessBlob **stateless_blob)
 {
     XmssPrivateKeyStatelessBlob *reallocated_stateless_blob = NULL;
 
-    XmssError result = check_key_context_well_formed(key_context);
+    volatile XmssError result = check_key_context_well_formed(key_context);
     REDUNDANT_RETURN_ERR(result);
 
     if (stateless_blob == NULL) {
@@ -1262,7 +1131,7 @@ static XmssError export_private_key_stateless(XmssKeyContext *key_context,
         stateless->redundant_scheme_identifier = convert_big_endian_word(key_context->context.redundant_parameter_set);
 
         /* Copy the stateless_contents, and perform the necessary endianness operations in-place. */
-        memcpy(&stateless->contents, &key_context->private_stateless, sizeof(stateless->contents));
+        stateless->contents = key_context->private_stateless;
         /* Canonicalize the byte-order of all applicable fields for export. */
         inplace_native_to_big_endian_256(&stateless->contents.prf_seed);
         inplace_native_to_big_endian_256(&stateless->contents.private_key_seed);
@@ -1277,9 +1146,8 @@ static XmssError export_private_key_stateless(XmssKeyContext *key_context,
         /* Compute the digest over the contents of the XmssPrivateKeyStateless structure excluding the integrity digest
          * field itself.
          */
-        xmss_digest(HASH_ABSTRACTION(&key_context->context.hash_functions) &stateless->integrity,
-            ((uint8_t *)stateless) + sizeof(stateless->integrity),
-            sizeof(*stateless) - sizeof(stateless->integrity));
+        xmss_digest(HASH_FUNCTIONS_FROM(key_context->context) &stateless->integrity,
+            ((uint8_t *)stateless) + sizeof(stateless->integrity), sizeof(*stateless) - sizeof(stateless->integrity));
 
         /* Check for bit errors. */
         if (convert_big_endian_word(stateless->private_key_stateless_version)
@@ -1292,12 +1160,12 @@ static XmssError export_private_key_stateless(XmssKeyContext *key_context,
         ) {
             key_context->context.free(reallocated_stateless_blob);
             *stateless_blob = NULL;
-            return XMSS_ERR_BIT_ERROR_DETECTED;
+            return XMSS_ERR_FAULT_DETECTED;
         }
     }
     *stateless_blob = reallocated_stateless_blob;
 
-    return XMSS_OKAY;
+    return result;
 }
 
 /**
@@ -1313,11 +1181,11 @@ static XmssError export_private_key_stateless(XmssKeyContext *key_context,
  * @retval XMSS_ERR_NULL_POINTER    A NULL pointer was passed.
  * @retval XMSS_ERR_ALLOC_ERROR     Memory allocation caused an error.
  * @retval XMSS_ERR_BAD_CONTEXT     context is not a correctly initialized context.
- * @retval XMSS_ERR_BIT_ERROR_DETECTED  A bit error was detected.
- *                                      (Note that bit errors can also cause different errors or segfaults.)
+ * @retval XMSS_ERR_FAULT_DETECTED  A bit error was detected.
+ *                                  (Note that bit errors can also cause different errors or segfaults.)
  */
-static XmssError export_private_key_stateful(const XmssKeyContext *const restrict key_context,
-        XmssPrivateKeyStatefulBlob **const restrict stateful_blob)
+static XmssError export_private_key_stateful(const XmssKeyContext *const key_context,
+        XmssPrivateKeyStatefulBlob **const stateful_blob)
 {
     XmssError result = check_key_context_well_formed(key_context);
     if (result != XMSS_OKAY) {
@@ -1344,7 +1212,7 @@ static XmssError export_private_key_stateful(const XmssKeyContext *const restric
         /* Copy the digest over the stateless blob from the key_context, as the Stateless key blob needs not be
          * available for export.
          */
-        value_256_copy(&stateful->digest_of_private_key_static_blob, &key_context->private_key_digest);
+        stateful->digest_of_private_key_static_blob = key_context->private_key_digest;
 
         /* Convert the integer values to big-endian. */
         stateful->private_key_stateful_version =
@@ -1363,9 +1231,8 @@ static XmssError export_private_key_stateful(const XmssKeyContext *const restric
         /* Compute the digest over the contents of the XmssPrivateKeyStateful structure excluding the integrity digest
          * field itself.
          */
-        xmss_digest(HASH_ABSTRACTION(&key_context->context.hash_functions) &stateful->integrity,
-            ((uint8_t*)stateful) + sizeof(stateful->integrity),
-            sizeof(*stateful) - sizeof(stateful->integrity));
+        xmss_digest(HASH_FUNCTIONS_FROM(key_context->context) &stateful->integrity,
+            ((uint8_t*)stateful) + sizeof(stateful->integrity), sizeof(*stateful) - sizeof(stateful->integrity));
 
         /* Check for bit errors. */
         if (convert_big_endian_word(stateful->private_key_stateful_version)
@@ -1385,15 +1252,15 @@ static XmssError export_private_key_stateful(const XmssKeyContext *const restric
         ) {
             key_context->context.free(reallocated_stateful_blob);
             *stateful_blob = NULL;
-            return XMSS_ERR_BIT_ERROR_DETECTED;
+            return XMSS_ERR_FAULT_DETECTED;
         }
     }
 
     *stateful_blob = reallocated_stateful_blob;
-    return XMSS_OKAY;
+    return result;
 }
 
-XmssError xmss_export_public_key(XmssPublicKeyBlob **exported_pub_key, const XmssKeyContext *key_context)
+XmssError xmss_export_public_key(XmssPublicKey *const exported_pub_key, const XmssKeyContext *const key_context)
 {
     XmssError result = check_key_context_well_formed(key_context);
     if (result != XMSS_OKAY) {
@@ -1407,32 +1274,20 @@ XmssError xmss_export_public_key(XmssPublicKeyBlob **exported_pub_key, const Xms
         return XMSS_ERR_NO_PUBLIC_KEY;
     }
 
-    XmssPublicKeyBlob *public_key_reallocated = key_context->context.realloc(*exported_pub_key,
-        XMSS_PUBLIC_KEY_BLOB_SIZE);
+    native_to_big_endian_256(&exported_pub_key->root, &key_context->public_key_root);
+    native_to_big_endian_256(&exported_pub_key->seed, &key_context->private_stateless.seed);
+    exported_pub_key->scheme_identifier = convert_big_endian_word(key_context->context.parameter_set);
 
-    if (public_key_reallocated == NULL) {
-        return XMSS_ERR_ALLOC_ERROR;
-    }
-    *exported_pub_key = public_key_reallocated;
-    memset(public_key_reallocated, 0, XMSS_PUBLIC_KEY_BLOB_SIZE);
-
-    public_key_reallocated->data_size = sizeof(XmssPublicKey);
-    native_to_big_endian_256(&public_key_reallocated->data.public_key, &key_context->public_key_root);
-    native_to_big_endian_256(&public_key_reallocated->data.seed, &key_context->private_stateless.seed);
-    public_key_reallocated->data.scheme_identifier = convert_big_endian_word(key_context->context.parameter_set);
-
-    return XMSS_OKAY;
+    return result;
 }
 
-XmssError xmss_verify_exported_public_key(const XmssPublicKeyBlob *exported_pub_key, const XmssKeyContext *key_context)
+XmssError xmss_verify_exported_public_key(const XmssPublicKey *const exported_pub_key,
+    const XmssKeyContext *const key_context)
 {
     volatile ValueCompareResult value_cmp = VALUES_ARE_NOT_EQUAL;
 
     if (exported_pub_key == NULL) {
         return XMSS_ERR_NULL_POINTER;
-    }
-    if (exported_pub_key->data_size != XMSS_PUBLIC_KEY_SIZE) {
-        return XMSS_ERR_INVALID_BLOB;
     }
 
     XmssError result = check_key_context_well_formed(key_context);
@@ -1445,28 +1300,28 @@ XmssError xmss_verify_exported_public_key(const XmssPublicKeyBlob *exported_pub_
 
     const volatile XmssParameterSetOID *const volatile p1  =
         (const XmssParameterSetOID *)&key_context->context.parameter_set;
-    const volatile uint32_t *const volatile p2 = &exported_pub_key->data.scheme_identifier;
+    const volatile uint32_t *const volatile p2 = &exported_pub_key->scheme_identifier;
     REDUNDANT_RETURN_IF((uint32_t)*p1 != convert_big_endian_word(*p2), XMSS_ERR_ARGUMENT_MISMATCH);
 
     {
         XmssValue256 canonicalized_root;
         native_to_big_endian_256(&canonicalized_root, &key_context->public_key_root);
-        value_cmp = compare_values_256(&canonicalized_root, &exported_pub_key->data.public_key);
+        value_cmp = compare_values_256(&canonicalized_root, &exported_pub_key->root);
         REDUNDANT_RETURN_IF(value_cmp != VALUES_ARE_EQUAL, XMSS_ERR_ARGUMENT_MISMATCH);
     }
     {
         XmssValue256 canonicalized_seed;
         native_to_big_endian_256(&canonicalized_seed, &key_context->private_stateless.seed);
-        value_cmp = compare_values_256(&canonicalized_seed, &exported_pub_key->data.seed);
+        value_cmp = compare_values_256(&canonicalized_seed, &exported_pub_key->seed);
         REDUNDANT_RETURN_IF(value_cmp != VALUES_ARE_EQUAL, XMSS_ERR_ARGUMENT_MISMATCH);
     }
-    return XMSS_OKAY;
+    return result;
 }
 
-XmssError xmss_generate_private_key(
-    XmssKeyContext **key_context, XmssPrivateKeyStatelessBlob **private_key, XmssPrivateKeyStatefulBlob **key_usage,
-    const XmssBuffer *secure_random, const XmssIndexObfuscationSetting index_obfuscation_setting,
-    const XmssBuffer *random, const XmssSigningContext *context)
+XmssError xmss_generate_private_key(XmssKeyContext **const key_context, XmssPrivateKeyStatelessBlob **const private_key,
+    XmssPrivateKeyStatefulBlob **const key_usage, const XmssBuffer *const secure_random,
+    const XmssIndexObfuscationSetting index_obfuscation_setting, const XmssBuffer *const random,
+    const XmssSigningContext *const context)
 {
     XmssError result = XMSS_ERR_BAD_CONTEXT;
 
@@ -1491,6 +1346,7 @@ XmssError xmss_generate_private_key(
             return XMSS_ERR_INVALID_ARGUMENT;
     }
 
+    result = XMSS_UNINITIALIZED;
     result = generate_private_key_internal(context, key_context, secure_random, index_obfuscation_setting, random);
     if (result != XMSS_OKAY) {
         /*
@@ -1499,6 +1355,7 @@ XmssError xmss_generate_private_key(
         return result;
     }
 
+    result = XMSS_UNINITIALIZED;
     result = export_private_key_stateless(*key_context, private_key);
     if (result != XMSS_OKAY) {
         xmss_free_key_context(*key_context);
@@ -1509,13 +1366,14 @@ XmssError xmss_generate_private_key(
     /* Copy the digest from the private key stateless part into the key context. */
     {
         XmssPrivateKeyStateless *private_key_internal = ((XmssPrivateKeyStateless *)(*private_key)->data);
-        value_256_copy(&(*key_context)->private_key_digest, &private_key_internal->integrity);
-        value_256_copy(&(*key_context)->redundant_private_key_digest, &private_key_internal->integrity);
+        (*key_context)->private_key_digest = private_key_internal->integrity;
+        (*key_context)->redundant_private_key_digest = private_key_internal->integrity;
     }
 
     /* The XmssPrivateKeyStatelessBlob digest completes the key context. */
     (*key_context)->initialized = (uint32_t)XMSS_INITIALIZATION_INITIALIZED;
 
+    result = XMSS_UNINITIALIZED;
     result = export_private_key_stateful(*key_context, key_usage);
     if (result != XMSS_OKAY) {
         xmss_free_key_context(*key_context);
@@ -1526,11 +1384,11 @@ XmssError xmss_generate_private_key(
         return result;
     }
 
-    return XMSS_OKAY;
+    return result;
 }
 
-XmssError xmss_request_future_signatures(XmssPrivateKeyStatefulBlob **const restrict new_key_usage,
-    XmssKeyContext *const restrict key_context, const uint32_t signature_count)
+XmssError xmss_request_future_signatures(XmssPrivateKeyStatefulBlob **const new_key_usage,
+    XmssKeyContext *const key_context, const uint32_t signature_count)
 {
     if (new_key_usage == NULL || key_context == NULL) {
         return XMSS_ERR_NULL_POINTER;
@@ -1554,7 +1412,7 @@ XmssError xmss_request_future_signatures(XmssPrivateKeyStatefulBlob **const rest
             || key_context->private_stateful.partition_end != key_context->redundant_private_stateful.partition_end
             || key_context->reserved_signatures_start != key_context->redundant_reserved_signatures_start
             || key_context->private_stateful.partition_start > key_context->private_stateful.partition_end + 1) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     return export_private_key_stateful(key_context, new_key_usage);
@@ -1574,8 +1432,7 @@ XmssError xmss_request_future_signatures(XmssPrivateKeyStatefulBlob **const rest
  * @param[in]  key_context  Context containing the XMSS key.
  * @param[in]  idx_sig      (Obfuscated) index of the signature for which to create an authentication path.
  */
-static void build_auth(XmssSignature *const restrict signature, const XmssKeyContext *const restrict key_context,
-    const uint32_t idx_sig)
+static void build_auth(XmssSignature *const signature, const XmssKeyContext *const key_context, const uint32_t idx_sig)
 {
     assert(key_context != NULL);
 
@@ -1609,7 +1466,7 @@ static void build_auth(XmssSignature *const restrict signature, const XmssKeyCon
  * during signature generation.
  * This function is designed to prevent a single random bit error from causing the re-use of a OTS key. Therefore, it
  * expects to be passed a redundant copy of idx_sig. A second one-time signature is created using the redundant copy.
- * If the signatures do not match, both are zeroized and XMSS_ERR_BIT_ERROR_DETECTED is returned.
+ * If the signatures do not match, both are zeroized and XMSS_ERR_FAULT_DETECTED is returned.
  * It is still possible for a single bit error in the calculation of the authentication path to result in an invalid
  * signature. This causes all reserved signatures to go to waste, but does not compromise the integrity of signatures.
  *
@@ -1622,42 +1479,44 @@ static void build_auth(XmssSignature *const restrict signature, const XmssKeyCon
  * @param[in]  idx_sig              Index of the signature (after obfuscation).
  * @param[in]  redundant_idx_sig    Redundant copy of idx_sig.
  * @retval XMSS_OKAY    Success.
- * @retval XMSS_ERR_BIT_ERROR_DETECTED  A bit error was detected; note that not all bit errors will be detected.
+ * @retval XMSS_ERR_FAULT_DETECTED  A bit error was detected; note that not all bit errors will be detected.
  */
-static XmssError tree_sign(XmssSignature *const restrict signature, const XmssKeyContext *const restrict key_context,
-    const XmssNativeValue256 *const restrict message_digest, const uint32_t idx_sig, const uint32_t redundant_idx_sig)
+static XmssError tree_sign(XmssSignature *const signature, const XmssKeyContext *const key_context,
+    const XmssNativeValue256 *const message_digest, const uint32_t idx_sig, const uint32_t redundant_idx_sig)
 {
     assert(signature != NULL);
     assert(key_context != NULL);
     assert(message_digest != NULL);
 
-    WotspSignature redundant_wotsp_signature;  /* Uninitialized for performance reasons. */
+    WotspSignature redundant_wotsp_signature = { 0 };
+    volatile XmssError result = XMSS_UNINITIALIZED;
 
     /* We place the native-endian WOTS+ signature in the signature struct and then change the endianness in place.
      * We can cast it to (WotspSignature *) because it is 32-bit aligned due to the layout of XmssSignatureBlob. */
-    wotsp_sign(&key_context->context, (WotspSignature *)signature->wots_signature, message_digest,
+    result = wotsp_sign(&key_context->context, (WotspSignature *)signature->wots_signature, message_digest,
         &key_context->private_stateless.private_key_seed, &key_context->private_stateless.seed, idx_sig);
-    wotsp_sign(&key_context->context, &redundant_wotsp_signature, message_digest,
+    REDUNDANT_RETURN_ERR(result);
+
+    result = XMSS_UNINITIALIZED;
+    result = wotsp_sign(&key_context->context, &redundant_wotsp_signature, message_digest,
         &key_context->private_stateless.private_key_seed, &key_context->private_stateless.seed, redundant_idx_sig);
-    if (memcmp(signature->wots_signature[0].data, redundant_wotsp_signature.hashes[0].data, sizeof(WotspSignature))
-            != 0) {
-        key_context->context.zeroize(signature->wots_signature[0].data, sizeof(WotspSignature));
-        key_context->context.zeroize(redundant_wotsp_signature.hashes[0].data, sizeof(WotspSignature));
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+    REDUNDANT_RETURN_ERR(result);
+
+    if (memcmp(signature->wots_signature, &redundant_wotsp_signature, sizeof(WotspSignature)) != 0) {
+        key_context->context.zeroize(signature->wots_signature, sizeof(WotspSignature));
+        key_context->context.zeroize(&redundant_wotsp_signature, sizeof(WotspSignature));
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     inplace_native_to_big_endian((uint32_t *)signature->wots_signature, XMSS_WOTSP_LEN * 8);
 
     build_auth(signature, key_context, idx_sig);
-    return XMSS_OKAY;
+    return result;
 }
 
-XmssError xmss_sign_message(XmssSignatureBlob **const restrict signature,
-    XmssKeyContext *const restrict key_context,
-    const XmssBuffer *const restrict message)
+XmssError xmss_sign_message(XmssSignatureBlob **const signature, XmssKeyContext *const key_context,
+    const XmssBuffer *const message)
 {
-    XmssError err_code = XMSS_OKAY;
-
     if (signature == NULL || key_context == NULL || message == NULL) {
         return XMSS_ERR_NULL_POINTER;
     }
@@ -1669,7 +1528,7 @@ XmssError xmss_sign_message(XmssSignatureBlob **const restrict signature,
     if (key_context->reserved_signatures_start != key_context->redundant_reserved_signatures_start
             || key_context->private_stateful.partition_start != key_context->redundant_private_stateful.partition_start
             || key_context->private_stateful.partition_end != key_context->redundant_private_stateful.partition_end) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     if (key_context->reserved_signatures_start >= key_context->private_stateful.partition_start) {
@@ -1690,42 +1549,48 @@ XmssError xmss_sign_message(XmssSignatureBlob **const restrict signature,
      */
     volatile uint32_t obfuscated_idx_sig = 0;
     volatile uint32_t redundant_obfuscated_idx_sig = 0;
-    XmssError result = obfuscate_index(&obfuscated_idx_sig, key_context, idx_sig_pre_obfuscation);
+    volatile XmssError result = obfuscate_index(&obfuscated_idx_sig, key_context, idx_sig_pre_obfuscation);
     REDUNDANT_RETURN_ERR(result);
+    result = XMSS_UNINITIALIZED;
     result = obfuscate_index(&redundant_obfuscated_idx_sig, key_context, redundant_idx_sig_pre_obfuscation);
     REDUNDANT_RETURN_ERR(result);
-    Input_H_msg input_h_msg = INIT_INPUT_H_MSG;
     Input_PRF input_prf = INIT_INPUT_PRF;
     XmssSignature *signature_data = NULL;
-    XmssNativeValue256 message_digest; /* Uninitialized for performance reasons. */
+    XmssNativeValue256 native_random = { 0 };
+    Input_H_msg input = INIT_INPUT_H_MSG;
+    XmssHMsgCtx ctx = { 0 };
+    XmssNativeValue256 message_digest = { 0 };
 
     reallocated_signature->data_size = XMSS_SIGNATURE_SIZE(key_context->context.parameter_set);
     signature_data = (XmssSignature *)reallocated_signature->data;
     signature_data->leaf_index = convert_big_endian_word(obfuscated_idx_sig);
 
-    native_256_copy(&input_prf.KEY, &key_context->private_stateless.prf_seed);
+    input_prf.KEY = key_context->private_stateless.prf_seed;
     input_prf.M.idx_sig_block.idx_sig = obfuscated_idx_sig;
-    xmss_PRF(HASH_ABSTRACTION(&key_context->context.hash_functions) &input_h_msg.r, &input_prf);
+    xmss_PRF(HASH_FUNCTIONS_FROM(key_context->context) &native_random, &input_prf);
 
-    native_to_big_endian_256(&signature_data->random_bytes, &input_h_msg.r);
+    native_to_big_endian_256(&signature_data->random_bytes, &native_random);
 
-    native_256_copy(&input_h_msg.Root, &key_context->public_key_root);
-    input_h_msg.idx_sig = obfuscated_idx_sig;
-    xmss_H_msg(HASH_ABSTRACTION(&key_context->context.hash_functions) &message_digest, &input_h_msg, message->data,
-        message->data_size);
+    input.r = native_random;
+    input.Root = key_context->public_key_root;
+    input.idx_sig = obfuscated_idx_sig;
+    xmss_H_msg_init(HASH_FUNCTIONS_FROM(key_context->context) &ctx, &input);
+    xmss_H_msg_update(HASH_FUNCTIONS_FROM(key_context->context) &ctx, message->data, message->data_size, NULL);
+    xmss_H_msg_finalize(HASH_FUNCTIONS_FROM(key_context->context) &message_digest, &ctx);
 
-    err_code = tree_sign(signature_data, key_context, &message_digest, obfuscated_idx_sig,
+    result = XMSS_UNINITIALIZED;
+    result = tree_sign(signature_data, key_context, (XmssNativeValue256 *)&message_digest, obfuscated_idx_sig,
         redundant_obfuscated_idx_sig);
-    /* err_code can only be different from XMSS_OkAY if a bit error happened. Since we only protect against a single
+    /* result can only be different from XMSS_OKAY if a bit error happened. Since we only protect against a single
      * bit error, we don't need to double-check here. */
-    if (err_code != XMSS_OKAY) {
+    if (result != XMSS_OKAY) {
         key_context->context.free(reallocated_signature);
         *signature = NULL;
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     *signature = reallocated_signature;
-    return XMSS_OKAY;
+    return result;
 }
 
 XmssError xmss_partition_signature_space(XmssPrivateKeyStatefulBlob **const new_partition,
@@ -1759,6 +1624,7 @@ XmssError xmss_partition_signature_space(XmssPrivateKeyStatefulBlob **const new_
     key_context->private_stateful.partition_end -= new_partition_size;
     key_context->redundant_private_stateful.partition_end -= new_partition_size;
 
+    err_code = XMSS_UNINITIALIZED;
     err_code = export_private_key_stateful(key_context, updated_current_partition);
     REDUNDANT_RETURN_ERR(err_code);
 
@@ -1771,7 +1637,8 @@ XmssError xmss_partition_signature_space(XmssPrivateKeyStatefulBlob **const new_
     *new_partition = reallocated_new_partition;
 
     /* Copy *updated_current_partition to *new_partition, because most fields are the same. */
-    memcpy(*new_partition, *updated_current_partition, XMSS_PRIVATE_KEY_STATEFUL_BLOB_SIZE);
+    memcpy(&(*new_partition)->data, &(*updated_current_partition)->data, (*updated_current_partition)->data_size);
+    (*new_partition)->data_size = (*updated_current_partition)->data_size;
 
     /* Set the start and end for the new partition. */
     current_partition_internal = (XmssPrivateKeyStateful *)(*new_partition)->data;
@@ -1784,7 +1651,7 @@ XmssError xmss_partition_signature_space(XmssPrivateKeyStatefulBlob **const new_
         = convert_big_endian_word(redundant_old_partition_end);
 
     /* Update the integrity hash for the new partition. */
-    xmss_digest(HASH_ABSTRACTION(&key_context->context.hash_functions) &current_partition_internal->integrity,
+    xmss_digest(HASH_FUNCTIONS_FROM(key_context->context) &current_partition_internal->integrity,
         (*new_partition)->data + sizeof(current_partition_internal->integrity),
         sizeof(XmssPrivateKeyStateful) - sizeof(current_partition_internal->integrity));
 
@@ -1798,11 +1665,12 @@ XmssError xmss_partition_signature_space(XmssPrivateKeyStatefulBlob **const new_
     if (key_context_check->private_stateful.partition_end + 1
                 != convert_big_endian_word(new_partition_internal->contents.partition_start)
             || convert_big_endian_word(new_partition_internal->contents.partition_end) != old_partition_end) {
-        err_code = XMSS_ERR_BIT_ERROR_DETECTED;
+        err_code = XMSS_ERR_FAULT_DETECTED;
         goto fail;
     }
 
     /* Check the redundant fields in key_context. */
+    err_code = XMSS_UNINITIALIZED;
     err_code = check_key_context_well_formed(key_context_check);
     if (err_code != XMSS_OKAY) {
         goto fail;
@@ -1812,6 +1680,7 @@ XmssError xmss_partition_signature_space(XmssPrivateKeyStatefulBlob **const new_
     }
 
     /* Check the redundant fields and integrity hashes of the new blobs. */
+    err_code = XMSS_UNINITIALIZED;
     err_code = xmss_verify_private_key_stateful(*new_partition, NULL, key_context, NULL);
     if (err_code != XMSS_OKAY) {
         goto fail;
@@ -1819,6 +1688,7 @@ XmssError xmss_partition_signature_space(XmssPrivateKeyStatefulBlob **const new_
     if (err_code != XMSS_OKAY) {
         goto fail;
     }
+    err_code = XMSS_UNINITIALIZED;
     err_code = xmss_verify_private_key_stateful(*updated_current_partition, NULL, key_context, NULL);
     if (err_code != XMSS_OKAY) {
         goto fail;
@@ -1827,11 +1697,11 @@ XmssError xmss_partition_signature_space(XmssPrivateKeyStatefulBlob **const new_
         goto fail;
     }
 
-    return XMSS_OKAY;
+    return err_code;
 
 fail:
     if (err_code == XMSS_OKAY) {
-        err_code = XMSS_ERR_BIT_ERROR_DETECTED;
+        err_code = XMSS_ERR_FAULT_DETECTED;
     }
     /* Restore key_context to its original state. */
     key_context->private_stateful.partition_end = old_partition_end;
@@ -1869,14 +1739,14 @@ XmssError xmss_merge_signature_space(XmssPrivateKeyStatefulBlob **const new_key_
     if (extension_end < extension_start) {
         /* Check if a bit error sent us into the wrong branch. */
         if (extension_end >= extension_start || redundant_extension_end >= redundant_extension_start) {
-            return XMSS_ERR_BIT_ERROR_DETECTED;
+            return XMSS_ERR_FAULT_DETECTED;
         }
         return export_private_key_stateful(key_context, new_key_usage);
     }
 
     /* Check if a bit error caused us to skip the previous branch. */
     if (extension_end < extension_start) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     /* Check if we can attach the extension at the end. */
@@ -1884,7 +1754,7 @@ XmssError xmss_merge_signature_space(XmssPrivateKeyStatefulBlob **const new_key_
         /* Check if a bit error sent us into the wrong branch. */
         if (key_context->private_stateful.partition_end + 1 != extension_start
                 || key_context->redundant_private_stateful.partition_end + 1 != redundant_extension_start) {
-            return XMSS_ERR_BIT_ERROR_DETECTED;
+            return XMSS_ERR_FAULT_DETECTED;
         }
         key_context->private_stateful.partition_end = extension_end;
         key_context->redundant_private_stateful.partition_end = redundant_extension_end;
@@ -1893,7 +1763,7 @@ XmssError xmss_merge_signature_space(XmssPrivateKeyStatefulBlob **const new_key_
 
     /* Check if a bit error caused us to skip the previous branch. */
     if (key_context->redundant_private_stateful.partition_end + 1 == redundant_extension_start) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     /* Check if we can attach the extension at the front. */
@@ -1904,7 +1774,7 @@ XmssError xmss_merge_signature_space(XmssPrivateKeyStatefulBlob **const new_key_
         /* Check if a bit error sent us into the wrong branch. */
         if (extension_end + 1 != key_context->private_stateful.partition_start
                 || redundant_extension_end + 1 != key_context->redundant_private_stateful.partition_start) {
-            return XMSS_ERR_BIT_ERROR_DETECTED;
+            return XMSS_ERR_FAULT_DETECTED;
         }
         key_context->private_stateful.partition_start = extension_start;
         key_context->redundant_private_stateful.partition_start = redundant_extension_start;
@@ -1917,7 +1787,7 @@ XmssError xmss_merge_signature_space(XmssPrivateKeyStatefulBlob **const new_key_
 
     /* Check if a bit error caused us to skip the previous branch. */
     if (extension_end + 1 == key_context->private_stateful.partition_start) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     return XMSS_ERR_PARTITIONS_NOT_CONSECUTIVE;
@@ -1935,11 +1805,12 @@ XmssError xmss_get_signature_count(size_t *const total_count, size_t *const rema
     REDUNDANT_RETURN_ERR(err_code);
 
     *total_count = (size_t)(1llu << XMSS_TREE_DEPTH(key_context->context.parameter_set));
-    *remaining_count = key_context->private_stateful.partition_end - key_context->private_stateful.partition_start + 1;
-    redundant_remaining_count = key_context->redundant_private_stateful.partition_end
+    *remaining_count =
+        (size_t)key_context->private_stateful.partition_end - key_context->private_stateful.partition_start + 1;
+    redundant_remaining_count = (size_t)key_context->redundant_private_stateful.partition_end
         - key_context->redundant_private_stateful.partition_start + 1;
 
-    return (redundant_remaining_count == *remaining_count) ? XMSS_OKAY : XMSS_ERR_BIT_ERROR_DETECTED;
+    return (redundant_remaining_count == *remaining_count) ? XMSS_OKAY : XMSS_ERR_FAULT_DETECTED;
 }
 
 void xmss_free_key_generation_context(XmssKeyGenerationContext *const key_generation_context)
@@ -1951,8 +1822,8 @@ void xmss_free_key_generation_context(XmssKeyGenerationContext *const key_genera
     }
 }
 
-XmssError xmss_generate_public_key(
-    XmssKeyGenerationContext **generation_buffer, XmssInternalCache **cache, XmssInternalCache **generation_cache,
+XmssError xmss_generate_public_key(XmssKeyGenerationContext **const generation_buffer,
+    XmssInternalCache **const cache, XmssInternalCache **const generation_cache,
     const XmssKeyContext *const key_context, const XmssCacheType cache_type, const uint8_t cache_depth,
     const uint32_t generation_partitions)
 {
@@ -2043,11 +1914,11 @@ XmssError xmss_generate_public_key(
         reallocated_generation_buffer->partition_states->state = (uint32_t)XMSS_GENERATION_STATE_PREPARED;
     }
     reallocated_generation_buffer->initialized = (uint32_t)XMSS_INITIALIZATION_INITIALIZED;
-    return XMSS_OKAY;
+    return result;
 }
 
-XmssError xmss_calculate_public_key_part(
-    XmssKeyGenerationContext *generation_buffer, const uint32_t partition_index)
+XmssError xmss_calculate_public_key_part(XmssKeyGenerationContext *const generation_buffer,
+    const uint32_t partition_index)
 {
     if (generation_buffer == NULL) {
         return XMSS_ERR_NULL_POINTER;
@@ -2104,6 +1975,7 @@ XmssError xmss_calculate_public_key_part(
                     XMSS_CACHE_ENTRY_OFFSET(cache_to_build->cache_type,
                         cache_to_build->cache_level,
                         param_set, cache_height, index)];
+            result = XMSS_UNINITIALIZED;
             result = xmss_tree_hash(cache_node, generation_buffer->context, NULL,
                     index * (1 << cache_height), cache_height);
             if (result != XMSS_OKAY) {
@@ -2115,6 +1987,7 @@ XmssError xmss_calculate_public_key_part(
                 /* The lowest level of the partition's sub-tree of the top-cache has been filled, now the top-cache
                  * specific fill function can be used to finish the sub-tree.
                  */
+                result = XMSS_UNINITIALIZED;
                 result = xmss_fill_top_cache(cache_to_build, key_context, partition_height,
                         partition_index, cache_to_build->cache_level);
                 if (result != XMSS_OKAY) {
@@ -2135,6 +2008,7 @@ XmssError xmss_calculate_public_key_part(
                 XMSS_CACHE_ENTRY_OFFSET(generation_buffer->partition_cache->cache_type,
                     generation_buffer->partition_cache->cache_level,
                     generation_buffer->context->context.parameter_set, partition_height, partition_index)];
+    result = XMSS_UNINITIALIZED;
     result = xmss_tree_hash(cache_node, generation_buffer->context, cache_to_use, start_index, partition_height);
     if (result != XMSS_OKAY) {
         return result;
@@ -2149,7 +2023,7 @@ XmssError xmss_calculate_public_key_part(
             return XMSS_ERR_PARTITION_DONE;
         }
     }
-    return XMSS_OKAY;
+    return result;
 }
 
 /**
@@ -2166,7 +2040,7 @@ XmssError xmss_calculate_public_key_part(
 static XmssError xmss_finish_calculate_public_key_internal(XmssKeyContext *const key_context,
         const XmssKeyGenerationContext *const generation_buffer, const uint32_t partition_height)
 {
-    XmssError result = XMSS_OKAY;
+    XmssError result = XMSS_UNINITIALIZED;
     if (generation_buffer == NULL || key_context == NULL) {
         return XMSS_ERR_NULL_POINTER;
     }
@@ -2201,6 +2075,7 @@ static XmssError xmss_finish_calculate_public_key_internal(XmssKeyContext *const
         }
         /* If we use top caching, we need to finish its tree. */
         if (build_cache_type == XMSS_CACHE_TOP) {
+            result = XMSS_UNINITIALIZED;
             result = xmss_fill_top_cache(cache_to_build, key_context,
                     XMSS_TREE_DEPTH(param_set), 0, build_cache_level);
             if (result != XMSS_OKAY) {
@@ -2213,9 +2088,8 @@ static XmssError xmss_finish_calculate_public_key_internal(XmssKeyContext *const
         XMSS_TREE_DEPTH(generation_buffer->context->context.parameter_set));
 }
 
-XmssError xmss_finish_calculate_public_key(
-    XmssPublicKeyInternalBlob **const public_key, XmssKeyGenerationContext **const generation_buffer,
-    XmssKeyContext *const key_context)
+XmssError xmss_finish_calculate_public_key(XmssPublicKeyInternalBlob **const public_key,
+    XmssKeyGenerationContext **const generation_buffer, XmssKeyContext *const key_context)
 {
     if (public_key == NULL || generation_buffer == NULL || *generation_buffer == NULL || key_context == NULL) {
         return XMSS_ERR_NULL_POINTER;
@@ -2238,6 +2112,7 @@ XmssError xmss_finish_calculate_public_key(
 
     /* Determine the tree-height of the partitions. */
     uint32_t partition_height = 0;
+    result = XMSS_UNINITIALIZED;
     result = partitions_to_tree_height(&partition_height, (uint32_t)(*generation_buffer)->generation_partitions,
             (XmssParameterSetOID)key_context->context.parameter_set);
     if (result != XMSS_OKAY) {
@@ -2263,6 +2138,7 @@ XmssError xmss_finish_calculate_public_key(
     XmssPublicKeyInternal *const public_key_inner = (XmssPublicKeyInternal *)reallocated_blob->data;
 
     /* Compute the public key root node and fill caches as appropriate. */
+    result = XMSS_UNINITIALIZED;
     result = xmss_finish_calculate_public_key_internal(key_context, *generation_buffer, partition_height);
 
     /* Check the result of the root node computation. */
@@ -2290,13 +2166,13 @@ XmssError xmss_finish_calculate_public_key(
     public_key_inner->redundant_version = convert_big_endian_word(XMSS_VERSION_CURRENT_PUBLIC_KEY_STORAGE);
     public_key_inner->redundant_scheme_identifier = convert_big_endian_word(param_set);
     /* The digest is already in big-endian form. */
-    value_256_copy(&public_key_inner->digest_of_private_key_static_blob, &key_context->private_key_digest);
+    public_key_inner->digest_of_private_key_static_blob = key_context->private_key_digest;
     /* Set the public key root in big-endian form. */
-    native_to_big_endian_256(&public_key_inner->public_key, &key_context->public_key_root);
+    native_to_big_endian_256(&public_key_inner->root, &key_context->public_key_root);
     public_key_inner->cache_type = convert_big_endian_word((uint32_t)cache_type);
     public_key_inner->cache_level = convert_big_endian_word((uint32_t)cache_level);
     if (cache_type != XMSS_CACHE_NONE && cache_level != XMSS_TREE_DEPTH(param_set)) {
-        native_to_big_endian(public_key_inner->cache[0].data, cache_to_build->cache->data,
+        native_to_big_endian((uint8_t *)public_key_inner->cache, cache_to_build->cache->data,
                 XMSS_VALUE_256_WORDS * XMSS_CACHE_ENTRY_COUNT(cache_to_build->cache_type,
                     cache_to_build->cache_level, key_context->context.parameter_set));
     }
@@ -2304,7 +2180,7 @@ XmssError xmss_finish_calculate_public_key(
     /* Compute the digest over the contents of the XmssPublicKeyInternal structure excluding the integrity digest
      * field itself.
      */
-    xmss_digest(HASH_ABSTRACTION(&key_context->context.hash_functions) &public_key_inner->integrity,
+    xmss_digest(HASH_FUNCTIONS_FROM(key_context->context) &public_key_inner->integrity,
                 ((uint8_t *)public_key_inner) + sizeof(public_key_inner->integrity),
                 public_key_size - sizeof(public_key_inner->integrity));
 
@@ -2317,15 +2193,15 @@ XmssError xmss_finish_calculate_public_key(
     ) {
         key_context->context.free(reallocated_blob);
         *public_key = NULL;
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     *public_key = reallocated_blob;
-    return XMSS_OKAY;
+    return result;
 }
 
-XmssError xmss_verify_public_key(const XmssPublicKeyInternalBlob *const restrict pub_key,
-    const XmssPrivateKeyStatelessBlob *const restrict private_key, const XmssKeyContext *const restrict key_context)
+XmssError xmss_verify_public_key(const XmssPublicKeyInternalBlob *const pub_key,
+    const XmssPrivateKeyStatelessBlob *const private_key, const XmssKeyContext *const key_context)
 {
     /* To protect against bit errors in the CPU's flag register, we execute some if-statements in this function twice.
      * The variables being checked are volatile, so the compiler is not allowed to optimize away the redundant if. */
@@ -2340,13 +2216,10 @@ XmssError xmss_verify_public_key(const XmssPublicKeyInternalBlob *const restrict
     XmssParameterSetOID scheme_identifier = 0;
     XmssCacheType cache_type = XMSS_CACHE_NONE;
     uint32_t cache_level = 0;
-    volatile XmssError err_code = XMSS_OKAY;
-    volatile ValueCompareResult value_cmp;
+    volatile XmssError err_code = XMSS_UNINITIALIZED;
+    volatile ValueCompareResult value_cmp = VALUES_ARE_NOT_EQUAL;
     volatile bool private_key_checked = false;
     volatile bool key_context_checked = false;
-#if XMSS_ENABLE_HASH_ABSTRACTION
-    xmss_hashes hash_functions;
-#endif
 
     /* Check that the blob is large enough to contain all the fields of XmssPublicKeyInternal before the cache.
      * We need to know that we can access these fields before we can calculate the actual expected data_size.
@@ -2361,19 +2234,15 @@ XmssError xmss_verify_public_key(const XmssPublicKeyInternalBlob *const restrict
         convert_big_endian_word(pub_key_internal->public_key_version) != XMSS_VERSION_CURRENT_PUBLIC_KEY_STORAGE,
         XMSS_ERR_INVALID_BLOB);
     if (convert_big_endian_word(pub_key_internal->redundant_version) != XMSS_VERSION_CURRENT_PUBLIC_KEY_STORAGE) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
     /* Determine the hash function to use for the integrity digest. */
     scheme_identifier = (XmssParameterSetOID)convert_big_endian_word(pub_key_internal->scheme_identifier);
 
-    /* xmss_get_hash_functions() is not bit error resilient, but an error here will be caught later due to an incorrect
-     * integrity digest or when comparing the scheme identifier with the context. */
-    err_code = xmss_get_hash_functions(HASH_ABSTRACTION(&hash_functions) scheme_identifier);
-    if (err_code != XMSS_OKAY) {
-        /* The scheme identifier is invalid or unsupported by this library. */
-        return XMSS_ERR_INVALID_BLOB;
-    }
+    DEFINE_HASH_FUNCTIONS;
+    err_code = INITIALIZE_HASH_FUNCTIONS(scheme_identifier);
+    REDUNDANT_RETURN_ERR(err_code);
 
     /* Extract and validate the required parameters to calculate the expected size. */
     cache_type = (XmssCacheType)convert_big_endian_word(pub_key_internal->cache_type);
@@ -2389,10 +2258,10 @@ XmssError xmss_verify_public_key(const XmssPublicKeyInternalBlob *const restrict
         return XMSS_ERR_INVALID_BLOB;
     }
 
-    value_cmp = check_integrity_digest(HASH_ABSTRACTION(&hash_functions) &pub_key_internal->integrity,
+    value_cmp = check_integrity_digest(HASH_FUNCTIONS &pub_key_internal->integrity,
         (uint8_t *)pub_key_internal + sizeof(pub_key_internal->integrity),
         pub_key_size - sizeof(pub_key_internal->integrity));
-    REDUNDANT_RETURN_IF(value_cmp != VALUES_ARE_EQUAL, XMSS_ERR_BIT_ERROR_DETECTED);
+    REDUNDANT_RETURN_IF(value_cmp != VALUES_ARE_EQUAL, XMSS_ERR_FAULT_DETECTED);
 
     if (private_key != NULL) {
         XmssPrivateKeyStateless *private_key_internal = NULL;
@@ -2412,7 +2281,8 @@ XmssError xmss_verify_public_key(const XmssPublicKeyInternalBlob *const restrict
                                      &private_key_internal->integrity);
         REDUNDANT_RETURN_IF(value_cmp != VALUES_ARE_EQUAL, XMSS_ERR_ARGUMENT_MISMATCH);
 
-        err_code = verify_private_key_stateless_internal(HASH_ABSTRACTION(&hash_functions) private_key,
+        err_code = XMSS_UNINITIALIZED;
+        err_code = verify_private_key_stateless_internal(HASH_FUNCTIONS private_key,
             scheme_identifier, convert_big_endian_word(pub_key_internal->redundant_scheme_identifier));
         REDUNDANT_RETURN_ERR(err_code);
 
@@ -2431,8 +2301,8 @@ XmssError xmss_verify_public_key(const XmssPublicKeyInternalBlob *const restrict
 
     /* Check that a bit error didn't cause the program to skip verification steps. */
     if (private_key_checked != (private_key != NULL) || key_context_checked != (key_context != NULL)) {
-        return XMSS_ERR_BIT_ERROR_DETECTED;
+        return XMSS_ERR_FAULT_DETECTED;
     }
 
-    return XMSS_OKAY;
+    return err_code;
 }

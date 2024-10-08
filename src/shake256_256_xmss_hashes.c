@@ -13,23 +13,26 @@
 
 #include "config.h"
 
-#if !XMSS_ENABLE_SHAKE256_256
-#   error "SHAKE256/256 is disabled, so SHAKE256/256 related source files must not be compiled."
+#if !XMSS_ENABLE_HASH_ABSTRACTION
+#   error "Hash abstraction is disabled, so this source file must not be compiled."
 #endif
 
+#include "libxmss.h"
 #include "shake256_256_xmss_hashes.h"
 
-#if XMSS_ENABLE_HASH_ABSTRACTION
-
+LIBXMSS_STATIC
 const xmss_hashes shake256_256_xmss_hashes = {
-    .digest = shake256_256_digest,
-    .native_digest = shake256_256_native_digest,
     .F = shake256_256_F,
     .H = shake256_256_H,
-    .H_msg = shake256_256_H_msg,
-    .PRF = shake256_256_PRF,
+    .H_msg_init = shake256_256_H_msg_init,
+    .H_msg_update = shake256_256_H_msg_update,
+    .H_msg_finalize = shake256_256_H_msg_finalize,
+    .PRF = shake256_256_PRF
+#if XMSS_ENABLE_SIGNING
+    ,
     .PRFkeygen = shake256_256_PRFkeygen,
-    .PRFindex = shake256_256_PRFindex
-};
-
+    .PRFindex = shake256_256_PRFindex,
+    .digest = shake256_256_digest,
+    .native_digest = shake256_256_native_digest
 #endif
+};

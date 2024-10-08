@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include "private.h"
+#include "signing_private.h"
 
 int main(void) {
     uint8_t buf[XMSS_KEY_GENERATION_CONTEXT_SIZE(16)];

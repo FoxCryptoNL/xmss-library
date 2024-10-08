@@ -27,7 +27,10 @@
 
 #include "structures.h"
 
-XmssError xmss_get_hash_functions(HASH_ABSTRACTION(xmss_hashes *restrict hash_functions)
+XmssError xmss_get_hash_functions(
+#if XMSS_ENABLE_HASH_ABSTRACTION
+    const xmss_hashes **const hash_functions,
+#endif
     const XmssParameterSetOID parameter_set)
 {
 #if XMSS_ENABLE_HASH_ABSTRACTION
@@ -42,7 +45,7 @@ XmssError xmss_get_hash_functions(HASH_ABSTRACTION(xmss_hashes *restrict hash_fu
         case XMSS_PARAM_SHA2_20_256:
 # if XMSS_ENABLE_SHA256
 #  if XMSS_ENABLE_HASH_ABSTRACTION
-            *hash_functions = sha256_xmss_hashes;
+            *hash_functions = &sha256_xmss_hashes;
 #  endif
 # else
             /* The parameter set is not supported. */
@@ -55,7 +58,7 @@ XmssError xmss_get_hash_functions(HASH_ABSTRACTION(xmss_hashes *restrict hash_fu
         case XMSS_PARAM_SHAKE256_20_256:
 # if XMSS_ENABLE_SHAKE256_256
 #  if XMSS_ENABLE_HASH_ABSTRACTION
-            *hash_functions = shake256_256_xmss_hashes;
+            *hash_functions = &shake256_256_xmss_hashes;
 #  endif
 # else
             /* The parameter set is not supported. */

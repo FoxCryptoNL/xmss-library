@@ -24,7 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "../src/private.h"
+#include "signing_private.h"
 
 int main(void) {
     /* Prevent compilers from complaining about comparing constants. */

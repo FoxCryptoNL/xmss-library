@@ -37,7 +37,7 @@
  * @param[in]  src     The big-endian source byte stream.
  * @param[in]  count   The number of uint32_t in dst.
  */
-static inline void big_endian_to_native(uint32_t *restrict dst, const uint8_t *restrict src, uint_fast16_t count)
+static inline void big_endian_to_native(uint32_t *dst, const uint8_t *src, uint_fast32_t count)
 {
     for (; count > 0; --count, ++dst, src += 4) {
         *dst = ((uint32_t)src[0] << 24) | ((uint32_t)src[1] << 16) | ((uint32_t)src[2] << 8) | src[3];
@@ -53,7 +53,7 @@ static inline void big_endian_to_native(uint32_t *restrict dst, const uint8_t *r
  * @param[out] dst     The destination native value.
  * @param[in]  src     The big-endian source value byte stream.
  */
-static inline void big_endian_to_native_256(XmssNativeValue256 *restrict dst, const XmssValue256 *restrict src)
+static inline void big_endian_to_native_256(XmssNativeValue256 *dst, const XmssValue256 *src)
 {
     big_endian_to_native(dst->data, src->data, XMSS_VALUE_256_WORDS);
 }
@@ -72,7 +72,7 @@ static inline void big_endian_to_native_256(XmssNativeValue256 *restrict dst, co
  * @param[in,out] data   The buffer containing a big-endian byte stream on input, and a native uint32_t array on output.
  * @param[in]  count   The number of uint32_t in buf.
  */
-static inline void inplace_big_endian_to_native(uint32_t *data, uint_fast16_t count)
+static inline void inplace_big_endian_to_native(uint32_t *data, uint_fast32_t count)
 {
     for (; count > 0; --count, ++data) {
         const uint8_t *const bytes = (const uint8_t *)data;
@@ -102,7 +102,7 @@ static inline void inplace_big_endian_to_native_256(XmssNativeValue256 *value)
  * @param[in,out] data   The buffer containing a native uint32_t array on input, and a big-endian byte stream on output.
  * @param[in]  count   The number of uint32_t in buf.
  */
-static inline void inplace_native_to_big_endian(uint32_t *data, uint_fast16_t count)
+static inline void inplace_native_to_big_endian(uint32_t *data, uint_fast32_t count)
 {
     /* The operation is the same in either direction, so use the native to big-endian implementation. */
     inplace_big_endian_to_native(data, count);
@@ -137,7 +137,7 @@ static inline void inplace_native_to_big_endian_256(XmssNativeValue256 *value)
  * @param[in]  src     The native uint32_t source array.
  * @param[in]  count   The number of uint32_t in src.
  */
-static inline void native_to_big_endian(uint8_t *restrict dst, const uint32_t *restrict src, uint_fast16_t count)
+static inline void native_to_big_endian(uint8_t *dst, const uint32_t *src, uint_fast32_t count)
 {
     for (; count; --count, dst += 4, ++src) {
         dst[0] = (uint8_t)(*src >> 24);
@@ -156,7 +156,7 @@ static inline void native_to_big_endian(uint8_t *restrict dst, const uint32_t *r
  * @param[out] dst     The destination big-endian byte stream.
  * @param[in]  src     The native source value.
  */
-static inline void native_to_big_endian_256(XmssValue256 *restrict dst, const XmssNativeValue256 *restrict src)
+static inline void native_to_big_endian_256(XmssValue256 *const dst, const XmssNativeValue256 *const src)
 {
     native_to_big_endian(dst->data, src->data, XMSS_VALUE_256_WORDS);
 }

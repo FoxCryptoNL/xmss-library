@@ -26,7 +26,91 @@
 #   error "SHAKE256/256 uses generic interface, so SHAKE256/256 related internal headers must not be included."
 #endif
 
+#include "libxmss.h"
 #include "xmss_hashes_base.h"
+
+/**
+ * @copydoc prototype_F
+ * @see prototype_F
+ *
+ * @details
+ * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
+ */
+LIBXMSS_STATIC
+void shake256_256_F(XmssNativeValue256 *native_digest, const Input_F *input);
+
+/**
+ * @copydoc prototype_H
+ * @see prototype_H
+ *
+ * @details
+ * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
+ */
+LIBXMSS_STATIC
+void shake256_256_H(XmssNativeValue256 *native_digest, const Input_H *input);
+
+/**
+ * @copydoc prototype_H_msg_init
+ * @see prototype_H_msg_init
+ *
+ * @details
+ * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
+ */
+LIBXMSS_STATIC
+void shake256_256_H_msg_init(XmssHMsgCtx *ctx, const Input_H_msg *input);
+
+/**
+ * @copydoc prototype_H_msg_update
+ * @see prototype_H_msg_update
+ *
+ * @details
+ * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
+ */
+LIBXMSS_STATIC
+void shake256_256_H_msg_update(XmssHMsgCtx *ctx, const uint8_t *part, size_t part_length,
+    const uint8_t *volatile *part_verify);
+
+/**
+ * @copydoc prototype_H_msg_finalize
+ * @see prototype_H_msg_finalize
+ *
+ * @details
+ * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
+ */
+LIBXMSS_STATIC
+void shake256_256_H_msg_finalize(XmssNativeValue256 *native_digest, XmssHMsgCtx *ctx);
+
+/**
+ * @copydoc prototype_PRF
+ * @see prototype_PRF
+ *
+ * @details
+ * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
+ */
+LIBXMSS_STATIC
+void shake256_256_PRF(XmssNativeValue256 *native_digest, const Input_PRF *input);
+
+#if XMSS_ENABLE_SIGNING
+
+/**
+ * @copydoc prototype_PRFkeygen
+ * @see prototype_PRFkeygen
+ *
+ * @details
+ * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
+ */
+LIBXMSS_STATIC
+void shake256_256_PRFkeygen(XmssNativeValue256 *native_digest, const Input_PRFkeygen *input);
+
+/**
+ * @copydoc prototype_PRFindex
+ * @see prototype_PRFindex
+ *
+ * @details
+ * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
+ */
+LIBXMSS_STATIC
+void shake256_256_PRFindex(XmssNativeValue256 *native_digest, const Input_PRFindex *input);
 
 /**
  * @copydoc prototype_digest
@@ -37,7 +121,8 @@
  *
  * This function implements the SHAKE256($M$, 256) function as defined by NIST FIPS 202, Section 6.2.
  */
-void shake256_256_digest(XmssValue256 *restrict digest, const uint8_t *restrict message, size_t message_length);
+LIBXMSS_STATIC
+void shake256_256_digest(XmssValue256 *digest, const uint8_t *message, size_t message_length);
 
 /**
  * @copydoc prototype_native_digest
@@ -46,62 +131,9 @@ void shake256_256_digest(XmssValue256 *restrict digest, const uint8_t *restrict 
  * @details
  * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
  */
-void shake256_256_native_digest(XmssNativeValue256 *restrict native_digest, const uint32_t *restrict words,
-    size_t word_count);
+LIBXMSS_STATIC
+void shake256_256_native_digest(XmssNativeValue256 *native_digest, const uint32_t *words, size_t word_count);
 
-/**
- * @copydoc prototype_F
- * @see prototype_F
- *
- * @details
- * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
- */
-void shake256_256_F(XmssNativeValue256 *restrict native_digest, const Input_F *restrict input);
-
-/**
- * @copydoc prototype_H
- * @see prototype_H
- *
- * @details
- * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
- */
-void shake256_256_H(XmssNativeValue256 *restrict native_digest, const Input_H *restrict input);
-
-/**
- * @copydoc prototype_H_msg
- * @see prototype_H_msg
- *
- * @details
- * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
- */
-void shake256_256_H_msg(XmssNativeValue256 *restrict native_digest, const Input_H_msg *restrict input,
-    const uint8_t *restrict message, size_t message_length);
-
-/**
- * @copydoc prototype_PRF
- * @see prototype_PRF
- *
- * @details
- * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
- */
-void shake256_256_PRF(XmssNativeValue256 *restrict native_digest, const Input_PRF *restrict input);
-
-/**
- * @copydoc prototype_PRFkeygen
- * @see prototype_PRFkeygen
- *
- * @details
- * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
- */
-void shake256_256_PRFkeygen(XmssNativeValue256 *restrict native_digest, const Input_PRFkeygen *restrict input);
-
-/**
- * @copydoc prototype_PRFindex
- * @see prototype_PRFindex
- *
- * @details
- * This is the specialization for the SHAKE256/256 algorithm using the internal interface.
- */
-void shake256_256_PRFindex(XmssNativeValue256 *restrict native_digest, const Input_PRFindex *restrict input);
+#endif /* XMSS_ENABLE_SIGNING */
 
 #endif /* !XMSS_SHAKE256_256_INTERNAL_XMSS_HASHES_H_INCLUDED */

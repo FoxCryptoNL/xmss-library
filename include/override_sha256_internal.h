@@ -52,9 +52,12 @@
  * This function implements the loop body of the SHA-256($M$) function as defined by NIST FIPS 180-4, Section 6.2.2,
  * Steps 1, 2, 3, and 4.
  *
+ * For performance reasons, it is recommended not to validate the input. This function is guaranteed to be called by the
+ * library with valid input.
+ *
  * @param[in,out] Hi   Intermediate hash value $H_i$ in native form.
  * @param[in] Mi       Message block $M_i$ in native form (uint32_t[16] == 64 bytes).
  */
-void sha256_process_block(XmssNativeValue256 *restrict Hi, const uint32_t *restrict Mi);
+void xmss_sha256_process_block(XmssNativeValue256 *Hi, const uint32_t *Mi);
 
 #endif /* !XMSS_OVERRIDE_SHA256_INTERNAL_H_INCLUDED */

@@ -5,17 +5,14 @@
  * SPDX-FileContributor: Max Fillinger
  */
 
+#include "libxmss.c"
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "config.h"
-#include "wotsp.h"
-
-#include "private.h"
-#include "signing.h"
 
 #if XMSS_ENABLE_SHA256
 static bool test_pubkey_gen_sha256(void)
@@ -438,8 +435,8 @@ static bool test_verify(void)
         wotsp_sign(context, &signature, &message_digest, &secret_seed, &public_seed, 0);
 
         /* Check that we calculate the right public key for the signed message. */
-        wotsp_calculate_expected_public_key(HASH_ABSTRACTION(&context->hash_functions) &expected_public_key,
-            &message_digest, &signature, &public_seed, 0);
+        wotsp_calculate_expected_public_key(HASH_FUNCTIONS_FROM(*context) &expected_public_key, &message_digest,
+            &signature, &public_seed, 0);
         bool success = memcmp(&public_key, &expected_public_key, sizeof(public_key)) == 0;
         if (!success) {
             printf("Failed to verify correct signature for %s.\n", hash_names[i]);
@@ -447,8 +444,8 @@ static bool test_verify(void)
         overall_success = overall_success && success;
 
         /* Check that we calculate a different public key for an incorrect message. */
-        wotsp_calculate_expected_public_key(HASH_ABSTRACTION(&context->hash_functions) &expected_public_key,
-            &bad_digest, &signature, &public_seed, 0);
+        wotsp_calculate_expected_public_key(HASH_FUNCTIONS_FROM(*context) &expected_public_key, &bad_digest,
+            &signature, &public_seed, 0);
         success = memcmp(&public_key, &expected_public_key, sizeof(public_key)) != 0;
         if (!success) {
             printf("Incorrectly verified a wrong signature for %s.\n", hash_names[i]);

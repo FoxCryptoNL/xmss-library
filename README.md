@@ -9,8 +9,7 @@ eXtended Merkle Signature Scheme is a post-quantum safe signature algorithm
 ([RFC](https://datatracker.ietf.org/doc/html/rfc8391)).
 
 ![XMSS C Library License](https://img.shields.io/github/license/FoxCryptoNL/xmss-library?style=plastic)
-[![XMSS C Library Release](https://img.shields.io/github/v/release/FoxCryptoNL/xmss-library?style=plastic)](
-    https://github.com/FoxCryptoNL/xmss-library/releases)
+[![XMSS C Library Release](https://img.shields.io/github/v/release/FoxCryptoNL/xmss-library?style=plastic)](https://github.com/FoxCryptoNL/xmss-library/releases)
 
 ## XMSS C Library Source Code
 

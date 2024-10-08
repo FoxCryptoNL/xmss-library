@@ -10,23 +10,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "config.h"
-
-#include "signing.h"
-#include "xmss_tree.h"
-
 #include "endianness.h"
-#include "structures.h"
-#include "types.h"
-#include "xmss_hashes.h"
-#include "utils.h"
+#include "signing.h"
+#include "signing_private.h"
 
 
 int main(void)
 {
     bool success = true;
 
-    static XmssSigningContext *context_ptr_dynamic = NULL;
+    XmssSigningContext *context_ptr_dynamic = NULL;
 
 #if !XMSS_ENABLE_SHA256
     const uint32_t any_supported_param_set = XMSS_PARAM_SHAKE256_10_256;
@@ -98,11 +91,11 @@ int main(void)
     success = success && keygen_context == NULL;
     XmssPublicKeyInternal *public_key_internal = (XmssPublicKeyInternal *)public_key_blob->data;
     if (success) {
-        if (memcmp(&public_key_internal->public_key, &expected_root_be, sizeof(XmssValue256))) {
+        if (memcmp(&public_key_internal->root, &expected_root_be, sizeof(XmssValue256))) {
             success = false;
             printf("xmss_finish_calculate_public_key returned an unexpected result:\n");
             for (size_t i = 0; i < sizeof(XmssValue256); i++) {
-                printf("%02x", public_key_internal->public_key.data[i]);
+                printf("%02x", public_key_internal->root.data[i]);
             }
             printf("\n");
             printf("Expected result:\n");
@@ -115,13 +108,13 @@ int main(void)
         printf("One of the public key generation functions failed.\n");
     }
 
-    XmssPublicKeyBlob *exported_public_key_blob = NULL;
-    success = success && XMSS_OKAY == xmss_export_public_key(&exported_public_key_blob, key_context);
+    XmssPublicKey exported_public_key = { 0 };
+    success = success && XMSS_OKAY == xmss_export_public_key(&exported_public_key, key_context);
     /* Check public key against expected public key. */
-    success = success && memcmp(expected_pk, (uint8_t *)&exported_public_key_blob->data, sizeof(XmssPublicKey)) == 0;
+    success = success && memcmp(expected_pk, (uint8_t *)&exported_public_key, sizeof(XmssPublicKey)) == 0;
 
     /* Check public key against signing key_context. */
-    success = success && XMSS_OKAY == xmss_verify_exported_public_key(exported_public_key_blob, key_context);
+    success = success && XMSS_OKAY == xmss_verify_exported_public_key(&exported_public_key, key_context);
 
     xmss_free_key_context(key_context);
     free(stateless_blob);

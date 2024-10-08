@@ -21,7 +21,8 @@
 
 #include "config.h"
 
-#include "private.h"
+#include "libxmss.h"
+#include "signing_private.h"
 #include "wotsp.h"
 
 /**
@@ -47,8 +48,9 @@
  *                                      XMSS_TREE_DEPTH(param_set) represents the height of the root node of the tree.
  * @returns The root node of the tree.
 */
-XmssError xmss_tree_hash(XmssNativeValue256 *restrict output, const XmssKeyContext *key_context,
-        const XmssInternalCache *const cache_to_use, const uint32_t start_index, const uint32_t target_node_height);
+LIBXMSS_STATIC
+XmssError xmss_tree_hash(XmssNativeValue256 *output, const XmssKeyContext *key_context,
+    const XmssInternalCache *cache_to_use, uint32_t start_index, uint32_t target_node_height);
 
 /**
  * @brief
@@ -68,39 +70,8 @@ XmssError xmss_tree_hash(XmssNativeValue256 *restrict output, const XmssKeyConte
  * @retval XMSS_ERR_INVALID_ARGUMENT    subtree_root_height, subtree_root_index or pre_cached_height are at odds
  *                                      with each other or with the cache metadata.
  */
-XmssError xmss_fill_top_cache(XmssInternalCache *cache, const XmssKeyContext *const restrict keygen_context,
+LIBXMSS_STATIC
+XmssError xmss_fill_top_cache(XmssInternalCache *cache, const XmssKeyContext *keygen_context,
     uint32_t subtree_root_height, uint32_t subtree_root_index, uint32_t pre_cached_height);
-
-/**
- * @brief
- * Compresses WOTS+ public key. Implementation of L-Tree function from RFC 8391 section 4.1.5.
- *
- * @warning The caller is responsible for providing valid pointers. For performance reasons these will not be checked.
- * @warning the compression is done in-place to conserve memory, so the public key is mangled by this function.
- *
- * @param[in]       hash_functions  The hash functions to use.
- * @param[out]      output          The result of the L-tree computation.
- * @param[in,out]   pk              The public key, which will be overwritten during compression.
- * @param[in,out]   adrs            The adrs structure for this ltree operation. Address type must be set by caller.
- * @param[in]       seed            The public seed in native-endian form.
- */
-void xmss_ltree(HASH_ABSTRACTION(const xmss_hashes *restrict hash_functions) XmssNativeValue256 *restrict output,
-        WotspPublicKey *restrict pk, ADRS *restrict adrs, const XmssNativeValue256 *restrict seed);
-
-/**
- * @brief
- * Implementation of Randomized Tree Hashing (RFC 8391 section 4.1.4).
- *
- * @warning The caller is responsible for providing valid pointers. For performance reasons these will not be checked.
- *
- * @param[in]       hash_functions  The hash functions to use.
- * @param[out]      digest_out      The randomized hash digest.
- * @param[in,out]   rand_hash_state Structure containing the SEED and the ADRS for this operation.
- *                                  The keyAndMask of the address is written by this function.
- * @param [in]      left            The left input node. May alias with digest_out but not with right.
- * @param [in]      right           The right input node. May alias with digest_out but not with left.
- */
-void rand_hash(HASH_ABSTRACTION(const xmss_hashes *restrict hash_functions) XmssNativeValue256 *digest_out,
-        Input_PRF *rand_hash_state, const XmssNativeValue256 *left, const XmssNativeValue256 *right);
 
 #endif /* !XMSS_XMSS_TREE_H_INCLUDED */

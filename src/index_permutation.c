@@ -17,14 +17,14 @@
 #include "xmss_config.h"
 
 #include "endianness.h"
-#include "private.h"
+#include "signing_private.h"
 #include "wotsp.h"
 
 /**
  * @brief
  * The context structure for the index pseudo random number generation.
 */
-typedef struct {
+typedef struct ObfuscationRandomContext {
     /**
      * @brief
      * The input to the digest function used as a deterministic random generator.
@@ -74,9 +74,8 @@ typedef struct {
  * @param[in]           range           The range from which to generate a selection, must be in [1, UINT32_MAX].
  * @returns a value in the range of [0, range - 1].
 */
-static uint32_t deterministic_selection(
-    HASH_ABSTRACTION(const xmss_hashes *const restrict hash_functions)
-    ObfuscationRandomContext *const rng_context, const uint32_t range)
+static uint32_t deterministic_selection(HASH_FUNCTIONS_PARAMETER ObfuscationRandomContext *const rng_context,
+    const uint32_t range)
 {
     /* Initialize the result to an out-of-band value. */
     uint32_t result = range;
@@ -91,7 +90,7 @@ static uint32_t deterministic_selection(
 
     while (1) {
         if (rng_context->random_pool_word_size == 0) {
-            xmss_PRFindex(HASH_ABSTRACTION(hash_functions) &rng_context->random_pool, &rng_context->prf_index_input);
+            xmss_PRFindex(HASH_FUNCTIONS &rng_context->random_pool, &rng_context->prf_index_input);
             rng_context->prf_index_input.drbg_counter++;
             rng_context->random_pool_word_size = sizeof(XmssNativeValue256) / sizeof(uint32_t);
         }
@@ -106,9 +105,8 @@ static uint32_t deterministic_selection(
     }
 }
 
-XmssError generate_pseudorandom_permutation(
-    HASH_ABSTRACTION(const xmss_hashes *const restrict hash_functions)
-    uint32_t *permutation, const uint32_t num_elements, const XmssNativeValue256 *const index_permutation_seed,
+XmssError generate_pseudorandom_permutation(HASH_FUNCTIONS_PARAMETER uint32_t *const permutation,
+    const uint32_t num_elements, const XmssNativeValue256 *const index_permutation_seed,
     const XmssNativeValue256 *const SEED)
 {
     const uint32_t max_index = num_elements - 1;
@@ -119,8 +117,8 @@ XmssError generate_pseudorandom_permutation(
         return XMSS_ERR_NULL_POINTER;
     }
 
-    memcpy(rng_context.prf_index_input.S_INDEX.data, index_permutation_seed, sizeof(XmssNativeValue256));
-    memcpy(rng_context.prf_index_input.SEED.data, SEED, sizeof(XmssNativeValue256));
+    rng_context.prf_index_input.S_INDEX = *index_permutation_seed;
+    rng_context.prf_index_input.SEED = *SEED;
 
     /* Populate the initial non-permuted index space. */
     for (uint32_t i = 0; i < num_elements; i++) {
@@ -130,7 +128,7 @@ XmssError generate_pseudorandom_permutation(
     for (uint32_t i = 0; i < max_index; i++) {
         uint32_t tmp = permutation[max_index - i];
         /* select one value  in range [0, max_index - i]. */
-        uint32_t selection = deterministic_selection(HASH_ABSTRACTION(hash_functions) &rng_context, max_index - i + 1);
+        uint32_t selection = deterministic_selection(HASH_FUNCTIONS &rng_context, max_index - i + 1);
         permutation[max_index - i] = permutation[selection];
         permutation[selection] = tmp;
     }
